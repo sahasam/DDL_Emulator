@@ -6,6 +6,7 @@ import asyncio
 import threading
 import signal
 import socket
+import time
 
 def get_ip_address(interface_name):
     try:
@@ -48,6 +49,7 @@ if __name__ == "__main__":
             thread2 = threading.Thread(target=run_async_in_thread, args=(loop2, c_main(args.interface, remote_addr=('127.0.0.1', 55555))))
 
             thread1.start()
+            time.sleep(0.1) # make sure server starts
             thread2.start()
 
             signal.pause()

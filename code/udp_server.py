@@ -14,14 +14,22 @@ async def main(interface, local_addr=('127.0.0.1', 55555)):
 
     # One protocol instance will be created to serve all
     # client requests.
-    transport, protocol = await loop.create_datagram_endpoint(
-        lambda: ABPProtocol(),
-        local_addr=local_addr)
+    protocol = ABPProtocol(loop)
 
-    try:
-        await asyncio.sleep(3600)  # Serve for 1 hour.
-    finally:
-        transport.close()
+    while True:
+        try:
+            transport, protocol_instance = await loop.create_datagram_endpoint(
+                lambda: protocol,
+                local_addr=local_addr)
+            await protocol_instance.on_con_lost
+        except Exception as e:
+            print(f"Error during connection: {e}")
+        finally:
+            print("Reconnecting...")
+            await asyncio.sleep(1)
+        
+
+
 
 if __name__ == "__main__":
     asyncio.run(main())
