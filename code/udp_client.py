@@ -17,9 +17,12 @@ async def main(interface='local', remote_addr=('127.0.0.1',55555)):
 
     while True:
         try:
-            transport, protocol_instance = await loop.create_datagram_endpoint(
-                lambda: protocol,
-                remote_addr=remote_addr)
+            transport, protocol_instance = await asyncio.wait_for(
+                loop.create_datagram_endpoint(
+                    lambda: protocol, remote_addr=remote_addr
+                ),
+                timeout=1
+            )
             await protocol_instance.on_con_lost
         except Exception as e:
             print(f"Error during connection: {e}")
