@@ -14,7 +14,7 @@ async def main(interface, local_addr=('127.0.0.1', 55555)):
 
     # One protocol instance will be created to serve all
     # client requests.
-    protocol = ABPProtocol(loop)
+    protocol = ABPProtocol(loop, is_client=False)
 
     while True:
         try:
@@ -28,6 +28,7 @@ async def main(interface, local_addr=('127.0.0.1', 55555)):
         except Exception as e:
             print(f"Error during connection: {e}")
         finally:
+            transport.close()
             print("Reconnecting...")
             await asyncio.sleep(1)
         

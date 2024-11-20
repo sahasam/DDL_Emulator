@@ -13,7 +13,7 @@ async def main(interface='local', remote_addr=('127.0.0.1',55555)):
     print( "*************************************")
     loop = asyncio.get_running_loop()
 
-    protocol = ABPProtocol(loop, is_alice=True)
+    protocol = ABPProtocol(loop, is_client=True)
 
     while True:
         try:
@@ -27,6 +27,7 @@ async def main(interface='local', remote_addr=('127.0.0.1',55555)):
         except Exception as e:
             print(f"Error during connection: {e}")
         finally:
+            transport.close()
             print("Reconnecting...")
             await asyncio.sleep(1)
         
