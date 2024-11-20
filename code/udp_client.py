@@ -2,9 +2,15 @@ import asyncio
 
 from protocol import ABPProtocol
 
-async def main(remote_addr=('127.0.0.1',55555)):
+async def main(interface='local', remote_addr=('127.0.0.1',55555)):
     # Get a reference to the event loop as we plan to use
     # low-level APIs.
+    print( "*************************************")
+    print( "* Starting Client                   *")
+    print(f"* target          {remote_addr}     *")
+    print(f"* interface       {interface}       *")
+    print(f"* protocol        AlternatingBit    *")
+    print( "*************************************")
     loop = asyncio.get_running_loop()
 
     transport, protocol = await loop.create_datagram_endpoint(
@@ -16,4 +22,5 @@ async def main(remote_addr=('127.0.0.1',55555)):
     finally:
         transport.close()
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

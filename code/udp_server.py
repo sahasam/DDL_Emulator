@@ -1,8 +1,13 @@
 import asyncio
 from protocol import ABPProtocol
 
-async def main(local_addr=('127.0.0.1', 55555)):
-    print("Starting UDP server")
+async def main(interface, local_addr=('127.0.0.1', 55555)):
+    print( "*************************************")
+    print( "* Starting Server")
+    print(f"* listening       {local_addr}")
+    print(f"* interface       {interface}")
+    print(f"* protocol        AlternatingBit")
+    print( "*************************************")
     # Get a reference to the event loop as we plan to use
     # low-level APIs.
     loop = asyncio.get_running_loop()
