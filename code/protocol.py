@@ -18,7 +18,7 @@ class ABPProtocol:
         self.client_disconnected = asyncio.Future()
 
         self.event_count = 0
-        self.update_pps_task = asyncio.run_coroutine_threadsafe(self.update_pps(), loop)
+        self.update_pps_task = asyncio.create_task(self.update_pps())
 
         self.last_received_packet_time = time.time()
         if (is_client):
@@ -64,7 +64,7 @@ class ABPProtocol:
     
     async def update_pps(self):
         last_report_time = time.time()
-        while True:
+        while not self.client_disconnected.done():
             # Calculate elapsed time and PPS
             elapsed_time = time.time() - last_report_time
             if elapsed_time > 0:
@@ -77,7 +77,7 @@ class ABPProtocol:
             await asyncio.sleep(1)
     
     async def check_timeout(self):
-        while True:
+        while not self.client_disconnected.done():
             elapsed_time = time.time() - self.last_received_packet_time
             if elapsed_time > 1:
                 print("closing...")
