@@ -8,14 +8,14 @@ class ABPState:
         self.send_bit = 0
         self.send_value = 0
         self.expected_bit = 0
-        self.shutdown = Event()
 
 class ABPProtocol:
     def __init__(self, loop, is_client=False):
+        print("constructing")
         self.state = ABPState()
-        self.on_con_lost = asyncio.Future()
         self.transport = None
-        self.is_alice = is_client
+        self.is_client = is_client
+        self.client_disconnected = asyncio.Future()
 
         self.event_count = 0
         self.update_pps_task = asyncio.run_coroutine_threadsafe(self.update_pps(), loop)
@@ -47,15 +47,17 @@ class ABPProtocol:
         return rvalue, rbit
 
     def error_received(self, exc):
+        self.client_disconnected.set_result(True)
         print('Error received:', exc)
 
     def connection_lost(self, exc):
-        print("Connection closed")
-        self.on_con_lost.set_result(True)
+        self.client_disconnected.set_result(True)
+        print(f"Connection closed {exc}")
 
     def connection_made(self, transport):
+        print("Connection made")
         self.transport = transport
-        if (self.is_alice):
+        if (self.is_client):
             self.transport.sendto(self.create_packet()) 
         else:
             self.state.send_bit = 1
@@ -71,30 +73,15 @@ class ABPProtocol:
                 self.event_count = 0
 
                 # Clear the terminal line and print PPS
-                print(f"\rEvents per second: {pps:.2f}", end="")
+                print(f"Events per second: {pps:.2f}")
             await asyncio.sleep(1)
     
     async def check_timeout(self):
         while True:
             elapsed_time = time.time() - self.last_received_packet_time
             if elapsed_time > 1:
-                print(f"\nConnection timed out. Attempting to reconnect... (Attempt {self.reconnect_attempts + 1})")
-                await self.reconnect()
-            await asyncio.sleep(1)  # Check every second
-    
-    async def reconnect(self):
-        while True:
-            self.reconnect_attempts += 1
-            try:
-                # Example reconnection logic
+                print("closing...")
                 if self.transport:
-                    self.transport.close()  # Close existing transport
-                # Recreate transport here (replace with actual reconnect logic)
-                loop = asyncio.get_event_loop()
-                self.transport, _ = await loop.create_datagram_endpoint(
-                    lambda: self, remote_addr=('localhost', 12345)
-                )
-                print("Reconnected successfully.")
-            except Exception as e:
-                print(f"Reconnect failed: {e}")
-                await asyncio.sleep(1)  # Exponential backoff
+                    self.transport.close()
+            
+            await asyncio.sleep(1)

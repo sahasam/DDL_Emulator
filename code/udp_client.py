@@ -12,23 +12,16 @@ async def main(interface='local', remote_addr=('127.0.0.1',55555)):
     print(f"* protocol        AlternatingBit")
     print( "*************************************")
     loop = asyncio.get_running_loop()
-
-    protocol = ABPProtocol(loop, is_client=True)
-
+    
     while True:
         try:
-            transport, protocol_instance = await asyncio.wait_for(
-                loop.create_datagram_endpoint(
-                    lambda: protocol, remote_addr=remote_addr
-                ),
-                timeout=1
+            transport, protocol_instance = await loop.create_datagram_endpoint(
+                lambda: ABPProtocol(loop, is_client=True), remote_addr=remote_addr
             )
-            await protocol_instance.on_con_lost
-        except Exception as e:
-            print(f"Error during connection: {e}")
+            await protocol_instance.client_disconnected
         finally:
             transport.close()
-            print("Reconnecting...")
+            print("Resetting connection")
             await asyncio.sleep(1)
         
 

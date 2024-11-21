@@ -67,6 +67,6 @@ if __name__ == "__main__":
         dst = get_ip_address("bridge0")
         loop = asyncio.get_event_loop()
         if args.mode == "a":
-            loop.run_until_complete(c_main(args.interface, remote_addr=(dst, 55555)))
+            loop.run_until_complete(c_main(args.interface, remote_addr=('169.254.103.201', 55555)))
         elif args.mode == "b":
             loop.run_until_complete(s_main(args.interface, local_addr=(dst, 55555)))
