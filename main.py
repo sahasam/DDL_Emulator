@@ -1,12 +1,14 @@
-from udp_client import main as c_main
-from udp_server import main as s_main
+from ddl.udp_client import main as c_main
+from ddl.udp_server import main as s_main
+
+from signal import pause
 import argparse
 import psutil
 import asyncio
 import threading
-import signal
 import socket
 import time
+import logging
 
 def get_ip_address(interface_name):
     try:
@@ -32,10 +34,24 @@ def run_async_in_thread(loop, coro):
     asyncio.set_event_loop(loop)
     loop.run_until_complete(coro)
 
+def setup_logger(name, log_file, level=logging.INFO):
+    """Set up a logger for a specific thread."""
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    
+    # File handler for the specific log file
+    handler = logging.FileHandler(log_file, mode="w")
+    formatter = logging.Formatter('%(asctime)s - %(threadName)s - %(message)s')
+    handler.setFormatter(formatter)
+    
+    # Add the handler to the logger
+    logger.addHandler(handler)
+    return logger
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Alternating Bit Protocol Implementation')
     parser.add_argument('--mode', choices=['a', 'b'], default='a', help='Symmetry Break (a or b)')
-    parser.add_argument('--interface', choices=['bridge0', 'local'], default='local', help='Network interface to use')
+    parser.add_argument('--interface', choices=['bridge0', 'local', 'localsingle'], default='local', help='Network interface to use')
     parser.add_argument('--debug', action='store_true', help='Flag to enable local process testing')
     
     args = parser.parse_args()
@@ -44,15 +60,20 @@ if __name__ == "__main__":
         try:
             loop1 = asyncio.new_event_loop()
             loop2 = asyncio.new_event_loop()
+            # Set up loggers for each thread
+            logger1 = setup_logger("ServerThread", "logs/server_thread.log")
+            logger2 = setup_logger("ClientThread", "logs/client_thread.log")
             
-            thread1 = threading.Thread(target=run_async_in_thread, args=(loop1, s_main(args.interface, local_addr=('127.0.0.1', 55555))))
-            thread2 = threading.Thread(target=run_async_in_thread, args=(loop2, c_main(args.interface, remote_addr=('127.0.0.1', 55555))))
+            thread1 = threading.Thread(target=run_async_in_thread, args=(loop1, s_main(args.interface, logger1, local_addr=('127.0.0.1', 55555))))
+            thread1.name = "server_thread"
+            thread2 = threading.Thread(target=run_async_in_thread, args=(loop2, c_main(args.interface, logger2, remote_addr=('127.0.0.1', 55555))))
+            thread2.name = "client_thread"
 
             thread1.start()
-            time.sleep(0.1) # make sure server starts
+            time.sleep(0.01) # make sure server starts
             thread2.start()
 
-            signal.pause()
+            pause()
         except KeyboardInterrupt:
             print("\nGracefully shutting down...")
 
