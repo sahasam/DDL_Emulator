@@ -14,9 +14,8 @@ async def main(interface, logger, local_addr=('127.0.0.1', 55555)):
 
     while True:
         try:
-            disconnected = asyncio.Future()
             transport, protocol_instance = await loop.create_datagram_endpoint(
-                lambda: ABPProtocol(disconnected, logger),
+                lambda: ABPProtocol(logger),
                 local_addr=local_addr
             )
             await protocol_instance.disconnected_future

@@ -6,24 +6,21 @@ class ABPState:
     def __init__(self):
         self.send_bit = 0
         self.send_value = 0
-        self.expected_bit = 0
+        self.expected_bit = 0 
 
 
-class ABPProtocol:
-    def __init__(self, disconnected_future, logger, is_client=False):
-        self.is_client = is_client
+class DDLSymmetric(asyncio.DatagramProtocol):
+    def __init__(self, logger=None, is_client=False):
+        super().__init__()
         self.logger = logger
-        self.logger.info("Started Protocol Instance. is_client={}".format(is_client))
-
-        self.state = ABPState()
-        self.disconnected_future = disconnected_future
-
+        self.is_client = is_client
+        self.disconnected_future = asyncio.Future()
         self.statistics = {
             'events': 0,
             'round_trip_latency': 0,
             'pps': 0
         }
-
+        self.logger.info("Started Connection Instance. is_client={}".format(is_client))
         # local tracking variables
         self._last_recv_time = time.time()
 
@@ -31,6 +28,60 @@ class ABPProtocol:
         if (is_client):
             asyncio.create_task(self.check_timeout())
 
+    def connection_lost(self, exc):
+        self.logger.info("Connection lost {}".format(exc))
+        if not self.disconnected_future.done():
+            self.disconnected_future.set_result(True)
+
+    def connection_made(self, transport):
+        self.logger.info("Connection made")
+        self.transport = transport
+        if (self.is_client):
+            self.transport.sendto(self.create_packet()) 
+        else:
+            self.state.send_bit = 1
+
+    def error_received(self, exc):
+        self.disconnected_future.set_result(True)
+        self.logger.error('Error received: {}'.format(exc))
+
+    async def check_timeout(self, timeout=0.1):
+        self.logger.info("Started timeout routine")
+        while not self.disconnected_future.done():
+            elapsed_time = time.time() - self._last_recv_time
+            if elapsed_time > timeout:
+                self.logger.info("Timeout triggered. Closing...")
+                if self.transport:
+                    self.transport.close()
+            
+            await asyncio.sleep(timeout)
+
+    async def update_statistics(self, refresh=0.1):
+        prev_stats_update_time = time.time()
+        while not self.disconnected_future.done():
+            elapsed_time = time.time() - prev_stats_update_time
+            if elapsed_time == 0:
+                continue
+
+            prev_stats_update_time = time.time()
+            if self.statistics['events'] > 0:
+                self.statistics['round_trip_latency'] = (elapsed_time / self.statistics['events'])
+            else:
+                self.statistics['round_trip_latency'] = float('inf')
+            self.statistics['pps'] = (self.statistics['events'] / elapsed_time)
+
+            self.logger.info("STATS events={} round_trip_latency_us={:.2f} pps={:.2f}".format(
+                self.statistics['events'],
+                self.statistics['round_trip_latency']*1e6,
+                self.statistics['pps']
+            ))
+            self.statistics['events'] = 0
+            await asyncio.sleep(refresh)   
+
+class ABPProtocol(DDLSymmetric):
+    def __init__(self, logger=None, is_client=False):
+        super().__init__(logger=logger, is_client=is_client)
+        self.state = ABPState()
     
     def datagram_received(self, data, addr):
         rvalue, rbit = self.unpack_packet(data)
@@ -55,52 +106,3 @@ class ABPProtocol:
         rbit = int.from_bytes(rbit, 'big')
         return rvalue, rbit
 
-    def error_received(self, exc):
-        self.disconnected_future.set_result(True)
-        print('Error received:', exc)
-
-    def connection_lost(self, exc):
-        self.logger.info("Connection lost")
-        if not self.disconnected_future.done():
-            self.disconnected_future.set_result(True)
-
-    def connection_made(self, transport):
-        self.transport = transport
-        if (self.is_client):
-            self.transport.sendto(self.create_packet()) 
-        else:
-            self.state.send_bit = 1
-
-    async def update_statistics(self, refresh=0.1):
-        self.logger.info("Started statistics coroutine")
-        prev_stats_update_time = time.time()
-        while not self.disconnected_future.done():
-            elapsed_time = time.time() - prev_stats_update_time
-            if elapsed_time == 0:
-                continue
-
-            prev_stats_update_time = time.time()
-            if self.statistics['events'] > 0:
-                self.statistics['round_trip_latency'] = (elapsed_time / self.statistics['events'])
-            else:
-                self.statistics['round_trip_latency'] = float('inf')
-            self.statistics['pps'] = (self.statistics['events'] / elapsed_time)
-
-            self.logger.info("STATS events={} round_trip_latency_us={:.2f} pps={:.2f}".format(
-                self.statistics['events'],
-                self.statistics['round_trip_latency']*1e6,
-                self.statistics['pps']
-            ))
-            self.statistics['events'] = 0
-            await asyncio.sleep(refresh)
-    
-    async def check_timeout(self, timeout=0.1):
-        self.logger.info("Started timeout routine")
-        while not self.disconnected_future.done():
-            elapsed_time = time.time() - self._last_recv_time
-            if elapsed_time > timeout:
-                self.logger.info("Timeout triggered. Closing...")
-                if self.transport:
-                    self.transport.close()
-            
-            await asyncio.sleep(timeout)
