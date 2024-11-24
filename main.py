@@ -1,38 +1,10 @@
-from ddl.udp_client import main as c_main
-from ddl.udp_server import main as s_main
+from ddl.port import ThreadedPort
 
 from signal import pause
 import argparse
-import psutil
 import asyncio
-import threading
-import socket
 import time
 import logging
-
-def get_ip_address(interface_name):
-    try:
-        # Get the network interfaces and their addresses
-        addrs = psutil.net_if_addrs()
-        
-        # Check if the specified interface exists
-        if interface_name not in addrs:
-            raise ValueError(f"Interface '{interface_name}' not found.")
-        
-        # Get the addresses for the interface
-        for addr in addrs[interface_name]:
-            if addr.family == socket.AF_INET:  # IPv4 address
-                return addr.address
-        
-        # If no IPv4 address is found
-        raise ValueError(f"No IPv4 address found for interface '{interface_name}'.")
-    
-    except Exception as e:
-        return str(e)
-
-def run_async_in_thread(loop, coro):
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(coro)
 
 def setup_logger(name, log_file, level=logging.INFO):
     """Set up a logger for a specific thread."""
@@ -60,17 +32,14 @@ if __name__ == "__main__":
         try:
             loop1 = asyncio.new_event_loop()
             loop2 = asyncio.new_event_loop()
-            # Set up loggers for each thread
             logger1 = setup_logger("ServerThread", "logs/server_thread.log")
             logger2 = setup_logger("ClientThread", "logs/client_thread.log")
-            
-            thread1 = threading.Thread(target=run_async_in_thread, args=(loop1, s_main(args.interface, logger1, local_addr=('127.0.0.1', 55555))))
-            thread1.name = "server_thread"
-            thread2 = threading.Thread(target=run_async_in_thread, args=(loop2, c_main(args.interface, logger2, remote_addr=('127.0.0.1', 55555))))
-            thread2.name = "client_thread"
+
+            thread1 = ThreadedPort(loop1, logger1, False, ('127.0.0.1', 55555))
+            thread2 = ThreadedPort(loop2, logger2, True, ('127.0.0.1', 55555))
 
             thread1.start()
-            time.sleep(0.01) # make sure server starts
+            time.sleep(0.1)
             thread2.start()
 
             pause()
@@ -85,9 +54,21 @@ if __name__ == "__main__":
 
     elif args.interface == "bridge0":
         # get bridge0 interface ip
-        dst = get_ip_address("bridge0")
-        loop = asyncio.get_event_loop()
-        if args.mode == "a":
-            loop.run_until_complete(c_main(args.interface, remote_addr=('169.254.103.201', 55555)))
-        elif args.mode == "b":
-            loop.run_until_complete(s_main(args.interface, local_addr=(dst, 55555)))
+        # Mac-Mini bridge0 ip: 169.254.103.201 (Manually set)
+        try:
+            dst = '169.254.103.201' 
+            loop = asyncio.get_event_loop()
+            if args.mode == "a":
+                logger = setup_logger("ClientThread", "logs/client_thread.log")
+                t = ThreadedPort(loop, logger, True, (dst, 55555))
+                t.start()
+            elif args.mode == "b":
+                logger = setup_logger("ServerThread", "logs/server_thread.log")
+                t = ThreadedPort(loop, logger, True, (dst, 55555))
+                t.start()
+
+            pause()
+        except KeyboardInterrupt:
+            print("\nGracefully shutting down...")
+            loop.call_soon_threadsafe(loop.stop)
+            t.join()
