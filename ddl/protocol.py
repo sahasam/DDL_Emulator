@@ -1,17 +1,30 @@
 import asyncio
 import struct
 import time
+from enum import Enum
 
 class ABPState:
     def __init__(self):
         self.send_bit = 0
         self.send_value = 0
-        self.expected_bit = 0 
+        self.expected_bit = 0
+
+
+class DropMode(Enum):
+    NONE = 0
+    ONE = 1
+    ALL = 2
+
+
+class DropConfig:
+    def __init__(self):
+        self.mode = DropMode.NONE
 
 
 class DDLSymmetric(asyncio.DatagramProtocol):
     def __init__(self, logger=None, is_client=False):
         super().__init__()
+        self.drop_config = DropConfig()
         self.logger = logger
         self.is_client = is_client
         self.disconnected_future = asyncio.Future()
@@ -21,12 +34,22 @@ class DDLSymmetric(asyncio.DatagramProtocol):
             'pps': 0
         }
         self.logger.info("Started Connection Instance. is_client={}".format(is_client))
-        # local tracking variables
         self._last_recv_time = time.time()
 
         asyncio.create_task(self.update_statistics(refresh=0.1))
         if (is_client):
             asyncio.create_task(self.check_timeout())
+    
+    def set_drop_mode(self, mode):
+        self.drop_config.mode = mode
+    
+    def should_drop_packet(self):
+        if self.drop_config.mode != DropMode.NONE:
+            if self.drop_config.mode == DropMode.ONE:
+                self.drop_config.mode = DropMode.NONE
+            self.logger.debug("Dropping packet DropMode={}".format(self.drop_config.mode))
+            return True
+        return False
 
     def connection_lost(self, exc):
         self.logger.info("Connection lost {}".format(exc))
@@ -76,7 +99,8 @@ class DDLSymmetric(asyncio.DatagramProtocol):
                 self.statistics['pps']
             ))
             self.statistics['events'] = 0
-            await asyncio.sleep(refresh)   
+            await asyncio.sleep(refresh)
+
 
 class ABPProtocol(DDLSymmetric):
     def __init__(self, logger=None, is_client=False):
@@ -84,8 +108,10 @@ class ABPProtocol(DDLSymmetric):
         self.state = ABPState()
     
     def datagram_received(self, data, addr):
-        rvalue, rbit = self.unpack_packet(data)
+        if self.should_drop_packet():
+            return
 
+        rvalue, rbit = self.unpack_packet(data)
         if (rbit == self.state.expected_bit):
             self.statistics['events'] += 1
             self._last_recv_time = time.time()
