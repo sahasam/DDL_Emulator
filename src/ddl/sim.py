@@ -18,7 +18,7 @@ def setup_logger(name, log_file, level=logging.INFO):
     logger.setLevel(level)
     
     # File handler for the specific log file
-    handler = logging.FileHandler(log_file, mode="w")
+    handler = logging.FileHandler(log_file, mode="w+")
     formatter = logging.Formatter('%(asctime)s - %(threadName)s - %(message)s')
     handler.setFormatter(formatter)
     
@@ -61,6 +61,22 @@ def handle_user_input(thread1, thread2=None):
                 print("Invalid command")
         except EOFError:
             break
+
+def sim_from_config(config):
+    threads = []
+    loops = []
+    for port in config['ports']:
+        loop = asyncio.new_event_loop()
+        logger = setup_logger(port['name'], f"logs/ports.log")
+        
+        threads.append(ThreadedUDPPort(loop, logger, port['type'] == 'client', (port['ip'], port['port'])))
+        loops.append(loop)
+    
+    print("*"*45)
+    for thread in threads:
+        print(thread.get_pretty_link_details())
+    print("*"*45)
+
 
 def link_sim():
     try:

@@ -1,0 +1,9 @@
+
+all:
+  hosts:
+    target1:
+      ansible_host: 169.254.103.200
+      ansible_user: srmunamala
+    target2:
+      ansible_host: 169.254.186.108
+      ansible_user: daedaelus

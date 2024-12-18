@@ -1,0 +1,7 @@
+services:
+  hermes-a:
+    image: hermes:dev
+    network_mode: host
+    container_name: hermes
+    volumes:
+      - ~/.config/hermes:/deploy/config

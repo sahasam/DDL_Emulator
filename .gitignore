@@ -2,3 +2,6 @@ env/
 **/__pycache__/
 logs/
 *.log
+.aider*
+.env
+.DS_Store

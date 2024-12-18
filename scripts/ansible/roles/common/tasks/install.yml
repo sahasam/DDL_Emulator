@@ -1,0 +1,25 @@
+- name: Build Podman image
+  containers.podman.podman_image:
+    name: hermes
+    tag: dev
+    path: "{{ project_root }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Save Podman image to tar file
+  containers.podman.podman_save:
+    image: hermes:dev
+    dest: /Users/sahas/dev/tmp/hermes-dev.tar
+    format: docker-archive
+  delegate_to: localhost
+  run_once: true
+
+- name: Copy image to remote hosts
+  copy:
+    src: ~/dev/tmp/hermes-dev.tar
+    dest: ~/dev/tmp/hermes-dev.tar
+
+- name: Load image on remote hosts
+  containers.podman.podman_load:
+    input: '/Users/{{ ansible_user }}/dev/tmp/hermes-dev.tar'
+    executable: /opt/homebrew/bin/podman

@@ -1,0 +1,43 @@
+- name: Deploy and run Python script
+  hosts: all
+  vars:
+    project_root: "{{ playbook_dir | dirname | dirname }}"
+
+  tasks:
+    - name: Copy image to remote hosts
+      import_role:
+        name: common
+
+    - name: Synchronize code to targets
+      synchronize:
+        src: "{{ project_root }}/src/"
+        dest: ~/dev/tmp/hermes_codevolume
+        recursive: yes # Recursively copy subdirectories
+        delete: yes # Remove files that don't exist in the source directory
+      delegate_to: localhost
+
+    - name: Start container
+      containers.podman.podman_container:
+        name: hermes
+        image: hermes:dev
+        network_mode: host
+        state: started
+        volumes:
+          - /Users/{{ ansible_user }}/.config/hermes:/deploy
+          - /Users/{{ ansible_user }}/dev/tmp/hermes_codevolume:/app
+        restart_policy: unless-stopped
+        executable: /opt/homebrew/bin/podman
+    
+    - name: Cleanup local tar file
+      file:
+        path: "~/dev/tmp/hermes-dev.tar"
+        state: absent
+      delegate_to: localhost
+
+    - name: Cleanup remote tar file
+      file:
+        path: "~/dev/tmp/hermes-dev.tar"
+        state: absent
+    
+
+  
