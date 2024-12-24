@@ -73,9 +73,10 @@ class DDLSymmetric(asyncio.DatagramProtocol):
         while not self.disconnected_future.done():
             elapsed_time = time.time() - self._last_recv_time
             if elapsed_time > timeout:
-                self.logger.info("Timeout triggered. Closing...")
+                self.logger.info("Timeout'd")
                 if self.transport:
-                    self.transport.close()
+                    self.reset_protocol()
+                    self.transport.sendto(self.create_packet())
             
             await asyncio.sleep(timeout)
 
@@ -103,7 +104,7 @@ class DDLSymmetric(asyncio.DatagramProtocol):
 
 
 class ABPProtocol(DDLSymmetric):
-    def __init__(self, logger=None, is_client=False):
+    def __init__(self, logger=None, is_client=False, iface_name=None):
         super().__init__(logger=logger, is_client=is_client)
         self.state = ABPState()
     
@@ -123,6 +124,9 @@ class ABPProtocol(DDLSymmetric):
                     .format(rvalue, rbit, self.state.send_value, self.state.send_bit))
         
         self.transport.sendto(self.create_packet(), addr)
+    
+    def reset_protocol(self):
+        self.state = ABPState()
     
     def create_packet(self):
         return struct.pack(">I59xc", self.state.send_value, self.state.send_bit.to_bytes(1, 'big'))

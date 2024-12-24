@@ -2,8 +2,14 @@
   containers.podman.podman_image:
     name: hermes
     tag: dev
-    path: "{{ project_root }}"
+    path: "{{ project_root }}/src"
   delegate_to: localhost
+  run_once: true
+
+- name: Copy config file to remote hosts
+  copy:
+    src: "{{ project_root }}/scripts/{{ ansible_user }}_config.yml"
+    dest: "/Users/{{ ansible_user }}/.config/hermes/node_config.yml"
   run_once: true
 
 - name: Save Podman image to tar file
@@ -16,7 +22,7 @@
 
 - name: Copy image to remote hosts
   copy:
-    src: ~/dev/tmp/hermes-dev.tar
+    src: /Users/sahas/dev/tmp/hermes-dev.tar
     dest: ~/dev/tmp/hermes-dev.tar
 
 - name: Load image on remote hosts

@@ -1,0 +1,8 @@
+- name: Create environment
+  import_tasks: 01_create_environment.yml
+
+- name: Update code
+  import_tasks: 02_update_code.yml
+
+- name: Run code
+  import_tasks: 03_run_code.yml

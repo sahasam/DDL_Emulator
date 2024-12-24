@@ -1,0 +1,9 @@
+- name: Copy source code to remote host
+  synchronize:
+    src: "{{ project_root }}/src/"
+    dest: /opt/hermes/src/
+    recursive: yes
+    checksum: yes
+    delete: yes
+  register: code_copy
+  changed_when: code_copy.changed

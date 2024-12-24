@@ -1,0 +1,64 @@
+##################################################
+# Create Application Directory
+##################################################
+#- name: Ensure /opt/hermes directory exists with sudo
+#  become: true
+#  ansible.builtin.file:
+#    path: /opt/hermes
+#    state: directory
+#    mode: '0755'
+#
+#- name: Change ownership of /opt/hermes to user
+#  become: true
+#  ansible.builtin.file:
+#    path: /opt/hermes
+#    owner: "{{ ansible_user }}"
+#    group: "staff"
+#    recurse: yes
+
+##################################################
+# Create User Config Directory
+##################################################
+- name: Ensure /opt/hermes/config directory exists
+  ansible.builtin.file:
+    path: /opt/hermes/config
+    state: directory
+    mode: '0755'
+
+- name: Copy user config file to /opt/hermes/config
+  ansible.builtin.copy:
+    src: "{{ project_root }}/scripts/{{ ansible_user }}_config.yml"
+    dest: /opt/hermes/config/config.yml
+    force: yes
+
+##################################################
+# Create Python Virtual Environment
+##################################################
+- name: Create Python virtual environment
+  ansible.builtin.pip:
+    name: pip
+    virtualenv: /opt/hermes/venv
+    virtualenv_command: python3 -m venv
+
+- name: Copy requirements.txt to remote host
+  ansible.builtin.copy:
+    src: "{{ project_root }}/requirements.txt"
+    dest: /opt/hermes/requirements.txt
+    force: yes
+
+- name: Install Python requirements
+  ansible.builtin.pip:
+    requirements: /opt/hermes/requirements.txt
+    virtualenv: /opt/hermes/venv
+    state: present
+  register: pip_result
+  changed_when: pip_result.changed
+
+##################################################
+# Create Application Logs Directory
+##################################################
+- name: Ensure /opt/hermes/logs directory exists
+  ansible.builtin.file:
+    path: /opt/hermes/logs
+    state: directory
+    mode: '0755'

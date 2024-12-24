@@ -66,16 +66,33 @@ def sim_from_config(config):
     threads = []
     loops = []
     for port in config['ports']:
+        if port['type'] == 'disconnected':
+            continue
         loop = asyncio.new_event_loop()
-        logger = setup_logger(port['name'], f"logs/ports.log")
-        
-        threads.append(ThreadedUDPPort(loop, logger, port['type'] == 'client', (port['ip'], port['port'])))
+        logger = setup_logger(port['name'], f"/opt/hermes/logs/{port['name']}.log")
+        threads.append(ThreadedUDPPort(loop, logger, port['type'] == 'client', (port['ip'], 55555), name=port['name']))
         loops.append(loop)
     
     print("*"*45)
     for thread in threads:
         print(thread.get_pretty_link_details())
     print("*"*45)
+
+    try:
+        for thread in threads:
+            thread.start()
+            time.sleep(0.1)
+    except Exception as e:
+        print(f"\nGracefully shutting down... {e}")
+
+        for thread in threads:
+            if thread.protocol_instance and thread.protocol_instance.transport:
+                thread.protocol_instance.transport.close()
+        for loop in loops:
+            loop.call_soon_threadsafe(loop.stop)
+            loop.close()
+        for thread in threads:
+            thread.join()
 
 
 def link_sim():

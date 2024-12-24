@@ -1,0 +1,11 @@
+- name: Deploy and run Python script
+  hosts: all
+  vars:
+    project_root: "{{ playbook_dir | dirname | dirname }}"
+
+  tasks:
+    - name: Copy image to remote hosts
+      import_role:
+        name: native_macos
+
+  

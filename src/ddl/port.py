@@ -14,25 +14,27 @@ import threading
 import asyncio
 
 class ThreadedUDPPort(threading.Thread):
-    def __init__(self, loop, logger, is_client, addr, **kwargs):
+    def __init__(self, loop, logger, is_client, addr, name, **kwargs):
         super().__init__(**kwargs)
         self.loop = loop
         self.logger = logger
         self.is_client = is_client
         self.addr = addr
+        self.name = name
         self.remote_addr = addr if is_client else None
         self.local_addr = addr if not is_client else None
         self.protocol_instance = None
     
     def get_pretty_link_details(self):
-        return "* UDP {:<5} * Address: {:>12}:{:<5} *" \
-                .format("Client" if self.is_client else "Server", *self.addr)
+        return "* UDP {:<5} * Interface: {:>7} * Address: {:>12}:{:<5} *" \
+                .format("Client" if self.is_client else "Server", self.name, *self.addr)
 
     def run(self):
         self.loop.run_until_complete(self.loop.create_task(self.run_link()))
     
     async def run_link(self):
         while True:
+            transport = None
             try:
                 transport, self.protocol_instance = await self.loop.create_datagram_endpoint(
                     lambda: ABPProtocol(logger=self.logger, is_client=self.is_client), 
@@ -41,8 +43,9 @@ class ThreadedUDPPort(threading.Thread):
                 )
                 await self.protocol_instance.disconnected_future
             finally:
-                transport.close()
-                print("Resetting connection")
+                if transport:
+                    transport.close()
+                print(f"Resetting {'Client to' if self.is_client else 'Server on'} {self.addr}")
                 await asyncio.sleep(1)
     
     def drop_one_packet(self):

@@ -1,0 +1,27 @@
+- name: Check for any running main.py processes
+  shell: "pgrep -f '/opt/hermes/src/main.py' || true"
+  register: process_check
+
+- name: Kill all existing main.py processes
+  shell: "pkill -f '/opt/hermes/src/main.py'"
+  when: process_check.stdout != ""
+  ignore_errors: yes
+
+- name: Wait for processes to terminate
+  shell: "pgrep -f '/opt/hermes/src/main.py' || true"
+  register: kill_check
+  retries: 3
+  delay: 1
+  until: kill_check.stdout == ""
+  when: process_check.stdout != ""
+
+- name: Clear logs directory
+  shell: "rm -rf /opt/hermes/logs/*"
+
+- name: Start main.py in background
+  shell: "/opt/hermes/venv/bin/python /opt/hermes/src/main.py --config-file /opt/hermes/config/config.yml > /opt/hermes/output.log 2>&1 & echo $!"
+  args:
+    chdir: /opt/hermes/src
+  async: 10
+  poll: 0
+

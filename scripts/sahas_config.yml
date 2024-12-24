@@ -1,0 +1,9 @@
+ports:
+  - name: en2
+    type: disconnected
+  - name: en3
+    ip: 169.254.1.20
+    type: server
+  - name: en4
+    ip: 169.254.2.30
+    type: client
