@@ -1,11 +1,17 @@
+# Hermes
 
-### File Sync for Python Source Code
+Hermes is a network simulation framework for testing and developing network protocols.
 
-Zip local dir and listen on tcp port for connections:
+## Usage
 
-    tar -cpv ./ | nc -l 45454
+```python
+from hermes.sim import Sim
 
+sim = Sim.from_config("config.json")
+sim.start()
+```
 
-Open connection over tcp and unzip content from connection:
+## Config
 
-    nc -w 10 169.254.103.201 | tar -xpv
+The config is a Yaml file that describes the simulation process. You can run an entire network in a single simulation, or just run the ports and threads of a single node.
+

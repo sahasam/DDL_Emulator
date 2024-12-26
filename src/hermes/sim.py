@@ -6,25 +6,60 @@ Right now: spin up the logs, loops, and prompting to run the single-link simulat
 Eventual Goal: Given an arbitrary description of a network topology with virtual links, real links, and unconnected links,
 create all threads, event loops, and logs for simulation
 """
-from ddl.port import ThreadedUDPPort
+from hermes.port import ThreadedUDPPort
 
 import asyncio
 import time
 import logging
 
-def setup_logger(name, log_file, level=logging.INFO):
-    """Set up a logger for a specific thread."""
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
+class Sim:
+    def __init__(self):
+        self.threads = []
+        self.loops = []
     
-    # File handler for the specific log file
-    handler = logging.FileHandler(log_file, mode="w+")
-    formatter = logging.Formatter('%(asctime)s - %(threadName)s - %(message)s')
-    handler.setFormatter(formatter)
+    def setup_logger(self, name, log_file, level=logging.INFO):
+        """Set up a logger for a specific thread."""
+        logger = logging.getLogger(name)
+        logger.setLevel(level)
+        
+        # File handler for the specific log file
+        handler = logging.FileHandler(log_file, mode="w+")
+        formatter = logging.Formatter('%(asctime)s - %(threadName)s - %(message)s')
+        handler.setFormatter(formatter)
+        
+        # Add the handler to the logger
+        logger.addHandler(handler)
+        return logger
     
-    # Add the handler to the logger
-    logger.addHandler(handler)
-    return logger
+    @classmethod
+    def from_config(cls, config):
+        """Given a config, create all threads and event loops for the simulation"""
+        for port in config['ports']:
+            if port['type'] == 'disconnected':
+                continue
+            loop = asyncio.new_event_loop()
+            logger = cls.setup_logger(port['name'], f"/opt/hermes/logs/{port['name']}.log")
+            cls.threads.append(ThreadedUDPPort(loop, logger, port['type'] == 'client', (port['ip'], 55555), name=port['name']))
+            cls.loops.append(loop)
+    
+    def start(self):
+        try:
+            for thread in self.threads:
+                thread.start()
+                time.sleep(0.1)
+        except Exception as e:
+            print(f"\nGracefully shutting down... {e}")
+
+            for thread in self.threads:
+                if thread.protocol_instance and thread.protocol_instance.transport:
+                    thread.protocol_instance.transport.close()
+            for loop in self.loops:
+                loop.call_soon_threadsafe(loop.stop)
+                loop.close()
+            for thread in self.threads:
+                thread.join()
+
+
 
 def print_menu(single_port=False, is_client=False):
     print("\nAvailable commands:")
@@ -101,8 +136,8 @@ def link_sim():
         loop2 = asyncio.new_event_loop()
         logger = setup_logger("LinkSim", "logs/sim.log")
 
-        thread1 = ThreadedUDPPort(loop1, logger, False, ('127.0.0.1', 55555), name="Server")
-        thread2 = ThreadedUDPPort(loop2, logger, True, ('127.0.0.1', 55555), name="Client")
+        thread1 = ThreadedUDPPort(loop1, logger, False, ('127.0.0.1', 55555), name="Alice")
+        thread2 = ThreadedUDPPort(loop2, logger, True, ('127.0.0.1', 55555), name="Bob")
 
         print("*"*44)
         print(thread1.get_pretty_link_details())
