@@ -8,7 +8,7 @@ emulation to manually inject all different types of faults as present in clos ne
 The port abstraction is intended to be symmetric to all layers above, but due to limitations of UDP as
 the link prtocol, the client/server interactions are hidden below.
 """
-from ddl.protocol import ABPProtocol, DropMode
+from hermes.protocol import ABPProtocol, DropMode
 
 import threading
 import asyncio
@@ -24,6 +24,7 @@ class ThreadedUDPPort(threading.Thread):
         self.remote_addr = addr if is_client else None
         self.local_addr = addr if not is_client else None
         self.protocol_instance = None
+        self.daemon = True
     
     def get_pretty_link_details(self):
         return "* UDP {:<5} * Interface: {:>7} * Address: {:>12}:{:<5} *" \
@@ -49,6 +50,20 @@ class ThreadedUDPPort(threading.Thread):
                 await asyncio.sleep(1)
     
     def drop_one_packet(self):
-        if self.protocol_instance:
-            self.loop.call_soon_threadsafe(self.protocol_instance.set_drop_mode(DropMode.ONE))
-
+        try:
+            if self.protocol_instance:
+                self.loop.call_soon_threadsafe(
+                    self.protocol_instance.set_drop_mode,
+                    DropMode.ONE
+                )
+        except Exception as e:
+            self.logger.error(f"Error dropping packet on {self.name}: {e}")
+    
+    def get_snapshot(self):
+        return {
+            "name": self.name,
+            "ip": self.addr[0],
+            "port": self.addr[1],
+            "type": "client" if self.is_client else "server",
+            "link": self.protocol_instance.get_link_status()
+        }

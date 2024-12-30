@@ -1,0 +1,17 @@
+ports:
+  - name: alice
+    ip: 127.0.0.1
+    port: 55550
+    type: client
+  - name: bob
+    ip: 127.0.0.1
+    port: 55550
+    type: server
+  - name: charlie
+    ip: 127.0.0.1
+    port: 55551
+    type: client
+  - name: dugan
+    ip: 127.0.0.1
+    port: 55551
+    type: server

@@ -68,7 +68,7 @@ class DDLSymmetric(asyncio.DatagramProtocol):
         self.disconnected_future.set_result(True)
         self.logger.error('Error received: {}'.format(exc))
 
-    async def check_timeout(self, timeout=0.1):
+    async def check_timeout(self, timeout=1):
         self.logger.info("Started timeout routine")
         while not self.disconnected_future.done():
             elapsed_time = time.time() - self._last_recv_time
@@ -79,6 +79,12 @@ class DDLSymmetric(asyncio.DatagramProtocol):
                     self.transport.sendto(self.create_packet())
             
             await asyncio.sleep(timeout)
+    
+    def get_link_status(self):
+        return {
+            "status": "connected" if not self.disconnected_future.done() else "disconnected",
+            "statistics": self.statistics
+        }
 
     async def update_statistics(self, refresh=0.1):
         prev_stats_update_time = time.time()
@@ -90,9 +96,10 @@ class DDLSymmetric(asyncio.DatagramProtocol):
             prev_stats_update_time = time.time()
             if self.statistics['events'] > 0:
                 self.statistics['round_trip_latency'] = (elapsed_time / self.statistics['events'])
+                self.statistics['pps'] = (self.statistics['events'] / elapsed_time)
             else:
-                self.statistics['round_trip_latency'] = float('inf')
-            self.statistics['pps'] = (self.statistics['events'] / elapsed_time)
+                self.statistics['round_trip_latency'] = 999999
+                self.statistics['pps'] = 0
 
             self.logger.info("STATS events={} round_trip_latency_us={:.2f} pps={:.2f}".format(
                 self.statistics['events'],
@@ -129,10 +136,12 @@ class ABPProtocol(DDLSymmetric):
         self.state = ABPState()
     
     def create_packet(self):
-        return struct.pack(">I59xc", self.state.send_value, self.state.send_bit.to_bytes(1, 'big'))
+        #return struct.pack(">I59xc", self.state.send_value, self.state.send_bit.to_bytes(1, 'big'))
+        return struct.pack(">Ic", self.state.send_value, self.state.send_bit.to_bytes(1, 'big'))
     
     def unpack_packet(self, data: bytes):
-        rvalue, rbit = struct.unpack(">I59xc", data)
+        #rvalue, rbit = struct.unpack(">I59xc", data)
+        rvalue, rbit = struct.unpack(">Ic", data)
         rbit = int.from_bytes(rbit, 'big')
         return rvalue, rbit
 
