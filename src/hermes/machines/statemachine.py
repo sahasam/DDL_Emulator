@@ -16,6 +16,7 @@ class Transition:
         self.next_state = next_state
         self.error_state = error_state
 
+
 class StateMachine(ABC):
     def __init__(self, transitions: list[Transition]):
         self.transitions = {transition.current_state: transition for transition in transitions}
@@ -28,10 +29,12 @@ class StateMachine(ABC):
     def to_hyperdata(self) -> Hyperdata:
         raise NotImplementedError
 
+
 class LivenessStateMachine(StateMachine):
     class LivenessState(Enum):
         S1 = 0
         S2 = 1
+        S3 = 2
 
         @classmethod
         def initial_state(cls):
@@ -40,7 +43,8 @@ class LivenessStateMachine(StateMachine):
     def __init__(self, owner: Identity):
         super().__init__([
             Transition(self.LivenessState.S1, self.LivenessState.S2, self.LivenessState.S2),
-            Transition(self.LivenessState.S2, self.LivenessState.S1, self.LivenessState.S1)
+            Transition(self.LivenessState.S2, self.LivenessState.S3, self.LivenessState.S3),
+            Transition(self.LivenessState.S3, self.LivenessState.S1, self.LivenessState.S1)
         ])
         self.owner = owner
         self.protocol = SMP.LIVENESS

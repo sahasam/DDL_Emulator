@@ -178,8 +178,9 @@ class LivenessProtocol(DDLSymmetric):
         # record link metrics, drop packet if necessary
         super().datagram_received(data, addr)
 
-        hyperdata = Hyperdata.from_bytes(data)
+        hyperdata = Hyperdata.from_bytes(data, self.state_machine.LivenessState)
         new_hyperdata = self.state_machine.evaluate_transition(hyperdata, lambda x: True)
+        self.logger.debug("EVALUATE_TRANSITION hyperdata={} new_hyperdata={}".format(hyperdata, new_hyperdata))
 
         self.transport.sendto(new_hyperdata.to_bytes(), addr)
     

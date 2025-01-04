@@ -1,3 +1,4 @@
+from enum import Enum
 import struct
 
 from hermes.machines.common import Identity, SMP
@@ -18,17 +19,20 @@ class Hyperdata(Data):
         self.state = None
     
     @classmethod
-    def from_bytes(cls, data: bytes):
+    def from_bytes(cls, data: bytes, state_type: Enum):
         owner, protocol, state = struct.unpack(">BHB", data[:4])
         hyperdata = cls()
         hyperdata.owner = Identity(owner)
         hyperdata.protocol = SMP(protocol) 
-        hyperdata.state = state
+        hyperdata.state = state_type(state)
         return hyperdata
 
     def to_bytes(self) -> bytes:
         state_value = self.state.value if hasattr(self.state, 'value') else self.state
         return struct.pack(">BHB", self.owner.value, self.protocol.value, state_value)
+    
+    def __str__(self):
+        return f"Hyperdata(owner={self.owner}, protocol={self.protocol}, state={self.state})"
 
 class Content(Data):
     def __init__(self, content: bytes):

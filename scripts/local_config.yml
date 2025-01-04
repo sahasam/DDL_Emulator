@@ -1,3 +1,10 @@
+config:
+  protocol: liveness
+  log_dir: ./logs
+  log_level:
+    websocket_server: info
+    alice: info
+    bob: info
 ports:
   - name: alice
     ip: 127.0.0.1
