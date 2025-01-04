@@ -1,7 +1,13 @@
+from abc import ABC
 import asyncio
 import struct
 import time
 from enum import Enum
+
+from hermes.machines.data import Hyperdata
+from hermes.machines.statemachine import LivenessStateMachine
+from hermes.machines.common import Identity
+
 
 class ABPState:
     def __init__(self):
@@ -9,17 +15,14 @@ class ABPState:
         self.send_value = 0
         self.expected_bit = 0
 
-
 class DropMode(Enum):
     NONE = 0
     ONE = 1
     ALL = 2
 
-
 class DropConfig:
     def __init__(self):
         self.mode = DropMode.NONE
-
 
 class DDLSymmetric(asyncio.DatagramProtocol):
     def __init__(self, logger=None, is_client=False):
@@ -59,10 +62,6 @@ class DDLSymmetric(asyncio.DatagramProtocol):
     def connection_made(self, transport):
         self.logger.info("Connection made")
         self.transport = transport
-        if (self.is_client):
-            self.transport.sendto(self.create_packet()) 
-        else:
-            self.state.send_bit = 1
 
     def error_received(self, exc):
         self.disconnected_future.set_result(True)
@@ -85,7 +84,14 @@ class DDLSymmetric(asyncio.DatagramProtocol):
             "status": "connected" if not self.disconnected_future.done() else "disconnected",
             "statistics": self.statistics
         }
-
+    
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        if self.should_drop_packet():
+            return
+        
+        self.statistics['events'] += 1
+        self._last_recv_time = time.time()
+    
     async def update_statistics(self, refresh=0.1):
         prev_stats_update_time = time.time()
         while not self.disconnected_future.done():
@@ -108,22 +114,32 @@ class DDLSymmetric(asyncio.DatagramProtocol):
             ))
             self.statistics['events'] = 0
             await asyncio.sleep(refresh)
+    
+    def create_packet(self):
+        raise NotImplementedError
+
+    def unpack_packet(self, data: bytes):
+        raise NotImplementedError
 
 
 class ABPProtocol(DDLSymmetric):
-    def __init__(self, logger=None, is_client=False, iface_name=None):
+    def __init__(self, logger=None, is_client=False):
         super().__init__(logger=logger, is_client=is_client)
         self.state = ABPState()
     
+    def connection_made(self, transport):
+        super().connection_made(transport)
+        if (self.is_client):
+            self.transport.sendto(self.create_packet()) 
+        else:
+            self.state.send_bit = 1
+    
     def datagram_received(self, data, addr):
-        if self.should_drop_packet():
-            return
+        # record link metrics, drop packet if necessary
+        super().datagram_received(data, addr)
 
         rvalue, rbit = self.unpack_packet(data)
         if (rbit == self.state.expected_bit):
-            self.statistics['events'] += 1
-            self._last_recv_time = time.time()
-
             self.state.send_bit = 1 - self.state.send_bit
             self.state.expected_bit = 1 - self.state.expected_bit
             self.state.send_value = rvalue + 1
@@ -145,3 +161,33 @@ class ABPProtocol(DDLSymmetric):
         rbit = int.from_bytes(rbit, 'big')
         return rvalue, rbit
 
+
+class LivenessProtocol(DDLSymmetric):
+    def __init__(self, logger=None, is_client=False):
+        super().__init__(logger, is_client=is_client)
+        self.state_machine = LivenessStateMachine(Identity.ME if is_client else Identity.NOT_ME)
+
+    def connection_made(self, transport):
+        super().connection_made(transport)
+        if (self.is_client):
+            self.transport.sendto(
+                self.state_machine.to_hyperdata().to_bytes()
+            )
+
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        # record link metrics, drop packet if necessary
+        super().datagram_received(data, addr)
+
+        hyperdata = Hyperdata.from_bytes(data)
+        new_hyperdata = self.state_machine.evaluate_transition(hyperdata, lambda x: True)
+
+        self.transport.sendto(new_hyperdata.to_bytes(), addr)
+    
+    def reset_protocol(self):
+        self.state_machine.reset()
+    
+    def create_packet(self):
+        return self.state_machine.to_hyperdata().to_bytes()
+    
+    def unpack_packet(self, data: bytes):
+        return Hyperdata.from_bytes(data)

@@ -8,7 +8,7 @@ emulation to manually inject all different types of faults as present in clos ne
 The port abstraction is intended to be symmetric to all layers above, but due to limitations of UDP as
 the link prtocol, the client/server interactions are hidden below.
 """
-from hermes.protocol import ABPProtocol, DropMode
+from hermes.protocol import ABPProtocol, LivenessProtocol, DropMode
 
 import threading
 import asyncio
@@ -67,3 +67,23 @@ class ThreadedUDPPort(threading.Thread):
             "type": "client" if self.is_client else "server",
             "link": self.protocol_instance.get_link_status()
         }
+
+class LivenessPort(ThreadedUDPPort):
+    def __init__(self, loop, logger, is_client, addr, name, **kwargs):
+        super().__init__(loop, logger, is_client, addr, name, **kwargs)
+    
+    async def run_link(self):
+        while True:
+            transport = None
+            try:
+                transport, self.protocol_instance = await self.loop.create_datagram_endpoint(
+                    lambda: LivenessProtocol(logger=self.logger, is_client=self.is_client), 
+                    remote_addr=self.remote_addr,
+                    local_addr=self.local_addr
+                )
+                await self.protocol_instance.disconnected_future
+            finally:
+                if transport:
+                    transport.close()
+                print(f"Resetting {'Client to' if self.is_client else 'Server on'} {self.addr}")
+                await asyncio.sleep(1)

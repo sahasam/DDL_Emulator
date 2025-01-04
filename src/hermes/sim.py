@@ -6,7 +6,7 @@ Right now: spin up the logs, loops, and prompting to run the single-link simulat
 Eventual Goal: Given an arbitrary description of a network topology with virtual links, real links, and unconnected links,
 create all threads, event loops, and logs for simulation
 """
-from hermes.port import ThreadedUDPPort
+from hermes.port import ThreadedUDPPort, LivenessPort
 from hermes.server import WebSocketServer
 
 import asyncio
@@ -54,7 +54,7 @@ class Sim:
             
             loop = asyncio.new_event_loop()
             logger = sim.setup_logger(port['name'], f"{sim.log_dir}/{port['name']}.log")
-            port_thread = ThreadedUDPPort(loop, logger, port['type'] == 'client', (port['ip'], port['port'] or 55555), name=port['name'])
+            port_thread = LivenessPort(loop, logger, port['type'] == 'client', (port['ip'], port['port'] or 55555), name=port['name'])
             
             sim.port_manager.add_port(port['name'], port_thread)
             sim.threads.append(port_thread)
