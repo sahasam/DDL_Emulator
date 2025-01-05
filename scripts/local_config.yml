@@ -3,8 +3,8 @@ config:
   log_dir: ./logs
   log_level:
     websocket_server: info
-    alice: info
-    bob: info
+    alice: debug
+    bob: debug
 ports:
   - name: alice
     ip: 127.0.0.1

@@ -5,7 +5,7 @@ import time
 from enum import Enum
 
 from hermes.machines.data import Hyperdata
-from hermes.machines.statemachine import LivenessStateMachine
+from hermes.machines.statemachine import LivenessStateMachine, StateMachine
 from hermes.machines.common import Identity
 
 
@@ -163,32 +163,59 @@ class ABPProtocol(DDLSymmetric):
 
 
 class LivenessProtocol(DDLSymmetric):
-    def __init__(self, logger=None, is_client=False):
+    def __init__(
+        self,
+        logger=None,
+        is_client=False,
+        state_machine: type[StateMachine]=LivenessStateMachine
+    ):
         super().__init__(logger, is_client=is_client)
-        self.state_machine = LivenessStateMachine(Identity.ME if is_client else Identity.NOT_ME)
+        self.state_machine = state_machine()
 
     def connection_made(self, transport):
         super().connection_made(transport)
         if (self.is_client):
             self.transport.sendto(
-                self.state_machine.to_hyperdata().to_bytes()
+                b"INIT"
             )
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         # record link metrics, drop packet if necessary
         super().datagram_received(data, addr)
 
-        hyperdata = Hyperdata.from_bytes(data, self.state_machine.LivenessState)
+        if data == b"INIT":
+            self.state_machine.reset()
+            self.transport.sendto(
+                b"INIT_ACK", addr
+            )
+            self.transport.sendto(
+                self.state_machine.to_hyperdata(Identity.ME).to_bytes(), addr
+            )
+            return
+        elif data == b"INIT_ACK":
+            self.state_machine.reset()
+            self.transport.sendto(
+                self.state_machine.to_hyperdata(Identity.ME).to_bytes(), addr
+            )
+            return
+
+
+
+        hyperdata = Hyperdata.from_bytes(data, self.state_machine.State)
+
         new_hyperdata = self.state_machine.evaluate_transition(hyperdata, lambda x: True)
         self.logger.debug("EVALUATE_TRANSITION hyperdata={} new_hyperdata={}".format(hyperdata, new_hyperdata))
 
         self.transport.sendto(new_hyperdata.to_bytes(), addr)
-    
+
     def reset_protocol(self):
         self.state_machine.reset()
     
     def create_packet(self):
-        return self.state_machine.to_hyperdata().to_bytes()
+        return b"INIT"
     
     def unpack_packet(self, data: bytes):
         return Hyperdata.from_bytes(data)
+    
+    def __repr__(self):
+        return f"LivenessProtocol(state_machine={self.state_machine}, is_client={self.is_client}, addr={self.transport.get_extra_info('peername')})"

@@ -31,38 +31,35 @@ class StateMachine(ABC):
 
 
 class LivenessStateMachine(StateMachine):
-    class LivenessState(Enum):
+    class State(Enum):
         S1 = 0
         S2 = 1
-        S3 = 2
 
         @classmethod
         def initial_state(cls):
             return cls.S1
     
-    def __init__(self, owner: Identity):
+    def __init__(self):
         super().__init__([
-            Transition(self.LivenessState.S1, self.LivenessState.S2, self.LivenessState.S2),
-            Transition(self.LivenessState.S2, self.LivenessState.S3, self.LivenessState.S3),
-            Transition(self.LivenessState.S3, self.LivenessState.S1, self.LivenessState.S1)
+            Transition(self.State.S1, self.State.S2, self.State.S2),
+            Transition(self.State.S2, self.State.S1, self.State.S1),
         ])
-        self.owner = owner
         self.protocol = SMP.LIVENESS
         self.updates = 0
-        self.state = self.LivenessState.initial_state()
+        self.state = self.State.initial_state()
     
     def evaluate_transition(self, hyperdata: Hyperdata, success_criteria: Callable[[Hyperdata], bool]) -> Hyperdata:
-        self.state = self.transitions[self.LivenessState(hyperdata.state)].next_state
+        self.state = self.transitions[self.State(hyperdata.state)].next_state
         self.updates += 1
-        return self.to_hyperdata()
+        return self.to_hyperdata(Identity(1 - hyperdata.owner._value_))
     
-    def to_hyperdata(self) -> Hyperdata:
+    def to_hyperdata(self, owner: Identity) -> Hyperdata:
         hyperdata = Hyperdata()
         hyperdata.protocol = self.protocol
         hyperdata.state = self.state
-        hyperdata.owner = self.owner
+        hyperdata.owner = owner
         return hyperdata
     
     def reset(self):
-        self.state = self.LivenessState.initial_state()
+        self.state = self.State.initial_state()
         self.updates = 0
