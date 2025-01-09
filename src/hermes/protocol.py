@@ -4,9 +4,9 @@ import struct
 import time
 from enum import Enum
 
-from hermes.machines.data import Hyperdata
-from hermes.machines.statemachine import LivenessStateMachine, StateMachine
-from hermes.machines.common import Identity
+from hermes.machines.data import Hyperdata, PacketBuilder
+from hermes.machines.statemachine import AlphabetStateMachine, LivenessStateMachine, StateMachine
+from hermes.machines.common import SMP, Identity
 
 
 class ABPState:
@@ -36,7 +36,7 @@ class DDLSymmetric(asyncio.DatagramProtocol):
             'round_trip_latency': 0,
             'pps': 0
         }
-        self.logger.info("Started Connection Instance. is_client={}".format(is_client))
+        self.logger.info(f"Started Connection Instance. is_client={is_client}")
         self._last_recv_time = time.time()
 
         asyncio.create_task(self.update_statistics(refresh=0.1))
@@ -118,9 +118,6 @@ class DDLSymmetric(asyncio.DatagramProtocol):
     def create_packet(self):
         raise NotImplementedError
 
-    def unpack_packet(self, data: bytes):
-        raise NotImplementedError
-
 
 class ABPProtocol(DDLSymmetric):
     def __init__(self, logger=None, is_client=False):
@@ -161,61 +158,92 @@ class ABPProtocol(DDLSymmetric):
         rbit = int.from_bytes(rbit, 'big')
         return rvalue, rbit
 
-
-class LivenessProtocol(DDLSymmetric):
-    def __init__(
-        self,
-        logger=None,
-        is_client=False,
-        state_machine: type[StateMachine]=LivenessStateMachine
-    ):
+class BidirectionalProtocol(DDLSymmetric):
+    def __init__(self, state_machine: type[StateMachine], logger=None, is_client=False):
         super().__init__(logger, is_client=is_client)
         self.state_machine = state_machine()
-
+    
     def connection_made(self, transport):
         super().connection_made(transport)
         if (self.is_client):
-            self.transport.sendto(
-                b"INIT"
-            )
-
-    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-        # record link metrics, drop packet if necessary
-        super().datagram_received(data, addr)
-
+            self.transport.sendto(b"INIT")
+    
+    def _handle_init_packet(self, data: bytes, addr: tuple[str, int]) -> bool:
+        if not (data == b"INIT" or data == b"INIT_ACK"):
+            return False
+        
         if data == b"INIT":
-            self.state_machine.reset()
-            self.transport.sendto(
-                b"INIT_ACK", addr
-            )
-            self.transport.sendto(
-                self.state_machine.to_hyperdata(Identity.ME).to_bytes(), addr
-            )
-            return
-        elif data == b"INIT_ACK":
-            self.state_machine.reset()
-            self.transport.sendto(
-                self.state_machine.to_hyperdata(Identity.ME).to_bytes(), addr
-            )
-            return
-
-
-
-        hyperdata = Hyperdata.from_bytes(data, self.state_machine.State)
-
-        new_hyperdata = self.state_machine.evaluate_transition(hyperdata, lambda x: True)
-        self.logger.debug("EVALUATE_TRANSITION hyperdata={} new_hyperdata={}".format(hyperdata, new_hyperdata))
-
-        self.transport.sendto(new_hyperdata.to_bytes(), addr)
-
+            self.transport.sendto(b"INIT_ACK", addr)
+    
+        packet = PacketBuilder() \
+            .with_hyperdata(Hyperdata(owner=Identity.ME, protocol=self.state_machine.protocol, state=self.state_machine.state)) \
+            .build()
+        self.transport.sendto(packet.to_bytes(), addr)
+        return True
+    
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        super().datagram_received(data, addr)
+        self._handle_init_packet(data, addr)
+    
     def reset_protocol(self):
         self.state_machine.reset()
     
     def create_packet(self):
         return b"INIT"
-    
-    def unpack_packet(self, data: bytes):
-        return Hyperdata.from_bytes(data)
-    
+
+class LivenessProtocol(BidirectionalProtocol):
+    def __init__(
+        self,
+        logger=None,
+        is_client=False
+    ):
+        super().__init__(LivenessStateMachine, logger=logger, is_client=is_client)
+
     def __repr__(self):
-        return f"LivenessProtocol(state_machine={self.state_machine}, is_client={self.is_client}, addr={self.transport.get_extra_info('peername')})"
+        return f"LivenessProtocol(state_machine={self.state_machine}, is_client={self.is_client})"
+    
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        # record link metrics, drop packet if necessary, handle init packet
+        super().datagram_received(data, addr)
+
+        if self._handle_init_packet(data, addr):
+            return
+
+        hyperdata, content = PacketBuilder.from_bytes(data)
+        new_data = self.state_machine.evaluate_transition(hyperdata, content)
+        self.transport.sendto(new_data.to_bytes(), addr)
+
+class AlphabetProtocol(BidirectionalProtocol):
+    def __init__(
+        self,
+        logger=None,
+        is_client=False
+    ):
+        super().__init__(AlphabetStateMachine, logger=logger, is_client=is_client)
+
+    def __repr__(self):
+        return f"LivenessProtocol(state_machine={self.state_machine}, is_client={self.is_client})"
+    
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        # record link metrics, drop packet if necessary, handle init packet
+        super().datagram_received(data, addr)
+
+        if self._handle_init_packet(data, addr):
+            return
+
+        hyperdata, content = Hyperdata.from_bytes(data, self.state_machine.states_type)
+        new_hyperdata = self.state_machine.evaluate_transition(hyperdata, content)
+        self.transport.sendto(new_hyperdata.to_bytes(), addr)
+
+    def _handle_init_packet(self, data: bytes, addr: tuple[str, int]) -> bool:
+        if not (data == b"INIT" or data == b"INIT_ACK"):
+            return False
+        
+        if data == b"INIT":
+            self.transport.sendto(b"INIT_ACK", addr)
+    
+        packet = PacketBuilder() \
+            .with_hyperdata(Hyperdata(owner=Identity.ME, protocol=SMP.LIVENESS, state=LivenessStateMachine.S.S1)) \
+            .build()
+        self.transport.sendto(packet.to_bytes(), addr)
+        return True
