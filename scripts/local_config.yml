@@ -1,5 +1,5 @@
 config:
-  protocol: liveness
+  protocol: abp
   log_dir: ./logs
   log_level:
     websocket_server: info

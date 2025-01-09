@@ -81,16 +81,17 @@ class DDLSymmetric(asyncio.DatagramProtocol):
     
     def get_link_status(self):
         return {
-            "status": "connected" if not self.disconnected_future.done() else "disconnected",
+            "status": "connected" if self.statistics['events'] > 0 else "disconnected",
             "statistics": self.statistics
         }
     
-    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> bool:
         if self.should_drop_packet():
-            return
+            return True
         
         self.statistics['events'] += 1
         self._last_recv_time = time.time()
+        return False
     
     async def update_statistics(self, refresh=0.1):
         prev_stats_update_time = time.time()
@@ -136,7 +137,8 @@ class ABPProtocol(DDLSymmetric):
     
     def datagram_received(self, data, addr):
         # record link metrics, drop packet if necessary
-        super().datagram_received(data, addr)
+        if super().datagram_received(data, addr):
+            return
 
         rvalue, rbit = self.unpack_packet(data)
         if (rbit == self.state.expected_bit):
@@ -181,7 +183,8 @@ class LivenessProtocol(DDLSymmetric):
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         # record link metrics, drop packet if necessary
-        super().datagram_received(data, addr)
+        if super().datagram_received(data, addr):
+            return
 
         if data == b"INIT":
             self.state_machine.reset()

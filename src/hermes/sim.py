@@ -163,6 +163,8 @@ class PortManager:
                         port = self.ports[port_name]
                         if action == 'DROP':
                             port.drop_one_packet()
+                        else:
+                            raise ValueError(f"Invalid action: {action}")
                 except Exception as e:
                     print(f"Error processing command: {e}")
 
