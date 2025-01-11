@@ -23,6 +23,12 @@ class DropMode(Enum):
 class DropConfig:
     def __init__(self):
         self.mode = DropMode.NONE
+    
+    def __str__(self):
+        return f"DropConfig(mode={self.mode})"
+    
+    def __repr__(self):
+        return self.__str__()
 
 class DDLSymmetric(asyncio.DatagramProtocol):
     def __init__(self, logger=None, is_client=False):
@@ -46,7 +52,7 @@ class DDLSymmetric(asyncio.DatagramProtocol):
     def set_drop_mode(self, mode):
         self.drop_config.mode = mode
     
-    def should_drop_packet(self):
+    def _should_drop_packet(self):
         if self.drop_config.mode != DropMode.NONE:
             if self.drop_config.mode == DropMode.ONE:
                 self.drop_config.mode = DropMode.NONE
@@ -86,7 +92,7 @@ class DDLSymmetric(asyncio.DatagramProtocol):
         }
     
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> bool:
-        if self.should_drop_packet():
+        if self._should_drop_packet():
             return True
         
         self.statistics['events'] += 1
@@ -160,10 +166,12 @@ class ABPProtocol(DDLSymmetric):
         rbit = int.from_bytes(rbit, 'big')
         return rvalue, rbit
 
+
 class BidirectionalProtocol(DDLSymmetric):
     def __init__(self, state_machine: type[StateMachine], logger=None, is_client=False):
         super().__init__(logger, is_client=is_client)
         self.state_machine = state_machine()
+        self.drops = 0
     
     def connection_made(self, transport):
         super().connection_made(transport)
@@ -183,9 +191,28 @@ class BidirectionalProtocol(DDLSymmetric):
         self.transport.sendto(packet.to_bytes(), addr)
         return True
     
-    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-        super().datagram_received(data, addr)
-        self._handle_init_packet(data, addr)
+    def _should_drop_packet(self):
+        if self.drop_config.mode != DropMode.NONE:
+            if self.drop_config.mode == DropMode.ONE:
+                self.drops = 2
+                self.drop_config.mode = DropMode.NONE
+            self.logger.debug("Dropping packet DropMode={}".format(self.drop_config.mode))
+            return True
+        return False
+    
+    def set_drop_mode(self, mode: DropMode):
+        self.drop_config.mode = mode
+    
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> bool:
+        if super().datagram_received(data, addr):
+            return True
+        
+        if self.drops > 0:
+            print(f"dropping... drops={self.drops}")
+            self.drops -= 1
+            return True
+
+        return self._handle_init_packet(data, addr)
     
     def reset_protocol(self):
         self.state_machine.reset()
@@ -204,16 +231,17 @@ class LivenessProtocol(BidirectionalProtocol):
     def __repr__(self):
         return f"LivenessProtocol(state_machine={self.state_machine}, is_client={self.is_client})"
     
-    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> bool:
         # record link metrics, drop packet if necessary, handle init packet
-        super().datagram_received(data, addr)
-
-        if self._handle_init_packet(data, addr):
-            return
+        if super().datagram_received(data, addr):
+            print(self.drop_config)
+            return True
 
         hyperdata, content = PacketBuilder.from_bytes(data)
         new_data = self.state_machine.evaluate_transition(hyperdata, content)
         self.transport.sendto(new_data.to_bytes(), addr)
+        return True
+
 
 class AlphabetProtocol(BidirectionalProtocol):
     def __init__(

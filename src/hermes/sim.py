@@ -161,6 +161,8 @@ class PortManager:
                     cmd = await self.command_queue.get()
                     port_name = cmd.get('port')
                     action = cmd.get('action')
+
+                    print(port_name, action)
                     
                     if port_name in self.ports:
                         port = self.ports[port_name]
