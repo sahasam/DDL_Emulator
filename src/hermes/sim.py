@@ -7,7 +7,7 @@ Eventual Goal: Given an arbitrary description of a network topology with virtual
 create all threads, event loops, and logs for simulation
 """
 from collections import defaultdict
-from hermes.port import ThreadedUDPPort, LivenessPort
+from hermes.port import AlphabetPort, ThreadedUDPPort, LivenessPort
 from hermes.server import WebSocketServer
 
 import asyncio
@@ -63,11 +63,14 @@ class Sim:
             
             loop = asyncio.new_event_loop()
             logger = sim.setup_logger(port['name'], f"{sim.log_dir}/{port['name']}.log", level=sim.log_level[port['name']])
+            print(logger)
             port_thread = None
             if sim.protocol == 'liveness':
                 port_thread = LivenessPort(loop, logger, port['type'] == 'client', (port['ip'], port['port'] or 55555), name=port['name'])
             elif sim.protocol == 'abp':
                 port_thread = ThreadedUDPPort(loop, logger, port['type'] == 'client', (port['ip'], port['port'] or 55555), name=port['name'])
+            elif sim.protocol == 'alphabet':
+                port_thread = AlphabetPort(loop, logger, port['type'] == 'client', (port['ip'], port['port'] or 55555), name=port['name'])
             else:
                 raise ValueError(f"Invalid protocol: {sim.protocol}")
             

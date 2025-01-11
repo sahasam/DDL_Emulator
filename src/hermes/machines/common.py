@@ -6,6 +6,12 @@ class Identity(Enum):
     ME = 0
     NOT_ME = 1
 
+    def __int__(self):
+        return self._value_
+    
+    def flip(self):
+        return Identity(1 - int(self))
+
 class SMP(Enum):
     LIVENESS = 0
     TWO_PHASE_COMMIT = 1
