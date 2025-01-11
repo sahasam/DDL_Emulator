@@ -56,7 +56,7 @@ class WebSocketServer:
                     break
                 except Exception as e:
                     self.logger.error(f"Error processing message from {client_id}: {e}")
-                    break
+
         except websockets.exceptions.ConnectionClosedError:
             self.logger.info(f"Connection closed by client during handshake")
         except Exception as e:

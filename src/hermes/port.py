@@ -59,6 +59,12 @@ class ThreadedUDPPort(threading.Thread):
         except Exception as e:
             self.logger.error(f"Error dropping packet on {self.name}: {e}")
     
+    def set_disconnected(self, disconnected):
+        if disconnected:
+            self.protocol_instance.set_drop_mode(DropMode.ALL)
+        else:
+            self.protocol_instance.set_drop_mode(DropMode.NONE)
+    
     def get_snapshot(self):
         return {
             "name": self.name,

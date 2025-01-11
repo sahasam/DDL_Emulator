@@ -163,6 +163,10 @@ class PortManager:
                         port = self.ports[port_name]
                         if action == 'DROP':
                             port.drop_one_packet()
+                        elif action == 'DISCONNECT':
+                            port.set_disconnected(True)
+                        elif action == 'CONNECT':
+                            port.set_disconnected(False)
                         else:
                             raise ValueError(f"Invalid action: {action}")
                 except Exception as e:
@@ -171,8 +175,8 @@ class PortManager:
     async def send_updates(self):
         while not self._stop_event.is_set():
             await asyncio.sleep(0.1)
-            snapshots = {}
+            snapshots = [] 
             for name, port in self.ports.items():
-                snapshots[name] = port.get_snapshot()
+                snapshots.append(port.get_snapshot())
 
             await self.websocket_server.send_updates(snapshots)
