@@ -108,8 +108,8 @@ class DDLSymmetric(asyncio.DatagramProtocol):
 
             prev_stats_update_time = time.time()
             if self.statistics['events'] > 0:
-                self.statistics['round_trip_latency'] = (elapsed_time / self.statistics['events'])
-                self.statistics['pps'] = (self.statistics['events'] / elapsed_time)
+                self.statistics['round_trip_latency'] = round((elapsed_time / self.statistics['events'])*1e6, 2)
+                self.statistics['pps'] = round((self.statistics['events'] / elapsed_time), 2)
             else:
                 self.statistics['round_trip_latency'] = 999999
                 self.statistics['pps'] = 0

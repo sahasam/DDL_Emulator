@@ -179,7 +179,7 @@ class PortManager:
 
     async def send_updates(self):
         while not self._stop_event.is_set():
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.75)
             snapshots = [] 
             for name, port in self.ports.items():
                 snapshots.append(port.get_snapshot())
