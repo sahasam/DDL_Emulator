@@ -180,8 +180,18 @@ class PortManager:
     async def send_updates(self):
         while not self._stop_event.is_set():
             await asyncio.sleep(0.75)
-            snapshots = [] 
-            for name, port in self.ports.items():
-                snapshots.append(port.get_snapshot())
+            snapshots = self.get_snapshots()
+            tree = self.get_tree()
 
-            await self.websocket_server.send_updates(snapshots)
+            await self.websocket_server.send_updates(snapshots, tree)
+    
+    def get_snapshots(self):
+        snapshots = [] 
+        for _, port in self.ports.items():
+            snapshots.append(port.get_snapshot())
+        return snapshots
+    
+    def get_tree(self):
+        nodes = ["me", "A", "B", "C"]
+        edges = [(0,1), (1,2), (0,3)]
+        return (nodes, edges)

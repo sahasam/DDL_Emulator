@@ -1,11 +1,13 @@
 from abc import ABC
 import asyncio
+from hashlib import sha256
+import random
 import struct
 import time
 from enum import Enum
 
-from hermes.machines.data import Hyperdata, PacketBuilder
-from hermes.machines.statemachine import AlphabetStateMachine, LivenessStateMachine, StateMachine
+from hermes.machines.data import Data, Hyperdata, PacketBuilder
+from hermes.machines.statemachine import AlphabetStateMachine, LivenessStateMachine, StateMachine, StateMachineFactory
 from hermes.machines.common import SMP, Identity
 
 
@@ -170,7 +172,7 @@ class ABPProtocol(DDLSymmetric):
 class BidirectionalProtocol(DDLSymmetric):
     def __init__(self, state_machine: type[StateMachine], logger=None, is_client=False):
         super().__init__(logger, is_client=is_client)
-        self.state_machine = state_machine()
+        self.state_machine = state_machine(logger=logger)
         self.drops = 0
     
     def connection_made(self, transport):
@@ -208,7 +210,6 @@ class BidirectionalProtocol(DDLSymmetric):
             return True
         
         if self.drops > 0:
-            print(f"dropping... drops={self.drops}")
             self.drops -= 1
             return True
 
@@ -255,25 +256,54 @@ class AlphabetProtocol(BidirectionalProtocol):
         return f"LivenessProtocol(state_machine={self.state_machine}, is_client={self.is_client})"
     
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        self.logger.debug(f"[ALPHABET_PROTOCOL] ---- Received packet: {data} ---- ")
         # record link metrics, drop packet if necessary, handle init packet
-        super().datagram_received(data, addr)
-
         if self._handle_init_packet(data, addr):
             return
+        super().datagram_received(data, addr)
 
-        hyperdata, content = Hyperdata.from_bytes(data, self.state_machine.states_type)
-        new_hyperdata = self.state_machine.evaluate_transition(hyperdata, content)
-        self.transport.sendto(new_hyperdata.to_bytes(), addr)
+        hyperdata, content = self._parse_hyperdata(data)
+        new_data = self.state_machine.evaluate_transition(hyperdata, content)
+        self.logger.debug(f"[DATAGRAM] Received: {hyperdata}. sending: {new_data}")
+        self.transport.sendto(new_data.to_bytes(), addr)
 
     def _handle_init_packet(self, data: bytes, addr: tuple[str, int]) -> bool:
-        if not (data == b"INIT" or data == b"INIT_ACK"):
+        # First check if this is an init packet at all
+        if not data.startswith(b"INIT"):
             return False
         
-        if data == b"INIT":
-            self.transport.sendto(b"INIT_ACK", addr)
+        try:
+            # Try to split and decode just the command portion
+            parts = data.split(b" ", 1)
+            command = parts[0].decode('utf-8')
+            session_id = parts[1].decode('utf-8') if len(parts) > 1 else None
+            
+            self.logger.debug(f"[ALPHABET_PROTOCOL] Received init packet: command={command} session_id={session_id}")
+            
+            if command == "INIT":
+                self.logger.debug(f"[ALPHABET_PROTOCOL] Sending INIT_ACK")
+                self.transport.sendto(b"INIT_ACK " + session_id.encode('utf-8'), addr)
+            elif command == "INIT_ACK":
+                if not session_id == self.session_id:
+                    return True  # Cancel session by dropping packet
+
+            self.logger.debug(f"[ALPHABET_PROTOCOL] Sending initiate packet")
+            self.transport.sendto(self.state_machine.initiate(), addr)
+            return True
+            
+        except (ValueError, UnicodeDecodeError) as e:
+            self.logger.error(f"Error handling init packet: {e}")
+            return False
     
-        packet = PacketBuilder() \
-            .with_hyperdata(Hyperdata(owner=Identity.ME, protocol=SMP.LIVENESS, state=LivenessStateMachine.S.S1)) \
-            .build()
-        self.transport.sendto(packet.to_bytes(), addr)
-        return True
+    def connection_made(self, transport):
+        self.transport = transport
+        if (self.is_client):
+            self.session_id = sha256(random.randbytes(16)).hexdigest()
+            self.logger.debug(f"[ALPHABET_PROTOCOL] Sending INIT {self.session_id}")
+            self.transport.sendto(b"INIT " + self.session_id.encode('utf-8'))
+    
+    def _parse_hyperdata(self, data: bytes) -> tuple[Hyperdata, Data]:
+        _owner, _protocol, _state = struct.unpack(">BHB", data[:4])
+        state_type = StateMachineFactory.get_state_type(SMP(_protocol))
+        remaining_data = data[4:] if len(data) > 4 else None
+        return Hyperdata(owner=Identity(_owner), protocol=SMP(_protocol), state=state_type(_state)), Data(remaining_data)

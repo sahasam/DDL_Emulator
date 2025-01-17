@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from enum import Enum
 import struct
 
 from hermes.machines.common import Identity, SMP
@@ -11,7 +10,10 @@ class Data:
     def to_bytes(self) -> bytes:
         return self.content
 
-    def __add__(self, other: 'Data') -> 'Data':
+    def __add__(self, other) -> 'Data':
+        if other is None:
+            return self
+
         return Data(self.to_bytes() + other.to_bytes())
 
 @dataclass
@@ -22,12 +24,7 @@ class Hyperdata(Data):
     
     @classmethod
     def from_bytes(cls, data: bytes):
-        _owner, _protocol, _state = struct.unpack(">BHB", data[:4])
-        hyperdata = cls()
-        hyperdata.owner = Identity(_owner)
-        hyperdata.protocol = SMP(_protocol) 
-        hyperdata.state = _state
-        return hyperdata
+        raise NotImplementedError
 
     def to_bytes(self) -> bytes:
         state_value = int(self.state)

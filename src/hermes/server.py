@@ -74,9 +74,16 @@ class WebSocketServer:
             print(f"WebSocket server listening on {self.host}:{self.port}")
             await asyncio.Future() 
     
-    async def send_updates(self, snapshots):
+    async def send_updates(self, snapshots, tree: tuple):
         """Send updates to all connected clients"""
-        message = json.dumps({"type": "update", "snapshots": snapshots})
+        message = json.dumps({
+            "type": "update",
+            "snapshots": snapshots,
+            "tree": {
+                "nodes": tree[0],
+                "edges": tree[1]
+            }
+        })
         dead_connections = set()
 
         for client_id, connection in self.active_connections:

@@ -1,16 +1,16 @@
 config:
-  protocol: liveness
+  protocol: alphabet
   log_dir: ./logs
   log_level:
     websocket_server: info
-    alice: info
-    bob: info
+    alice: debug
+    charlie: debug
 ports:
   - name: alice
     ip: 127.0.0.1
     port: 55550
     type: client
-  - name: bob
+  - name: charlie
     ip: 127.0.0.1
     port: 55550
     type: server
