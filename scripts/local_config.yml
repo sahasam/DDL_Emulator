@@ -1,10 +1,10 @@
 config:
-  protocol: alphabet
+  protocol: tree
   log_dir: ./logs
   log_level:
     websocket_server: info
-    alice: debug
-    charlie: debug
+    alice: info
+    charlie: info
 ports:
   - name: alice
     ip: 127.0.0.1

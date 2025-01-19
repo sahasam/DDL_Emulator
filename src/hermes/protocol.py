@@ -7,8 +7,9 @@ import time
 from enum import Enum
 
 from hermes.machines.data import Data, Hyperdata, PacketBuilder
-from hermes.machines.statemachine import AlphabetStateMachine, LivenessStateMachine, StateMachine, StateMachineFactory
+from hermes.machines.statemachine import AlphabetStateMachine, LivenessStateMachine, StateMachine, StateMachineFactory, TwoPhaseCommitPipeStateMachine
 from hermes.machines.common import SMP, Identity
+from hermes.algorithm import PipeQueue
 
 
 class ABPState:
@@ -48,8 +49,8 @@ class DDLSymmetric(asyncio.DatagramProtocol):
         self._last_recv_time = time.time()
 
         asyncio.create_task(self.update_statistics(refresh=0.1))
-        if (is_client):
-            asyncio.create_task(self.check_timeout())
+        # if (is_client):
+            # asyncio.create_task(self.check_timeout())
     
     def set_drop_mode(self, mode):
         self.drop_config.mode = mode
@@ -235,7 +236,6 @@ class LivenessProtocol(BidirectionalProtocol):
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> bool:
         # record link metrics, drop packet if necessary, handle init packet
         if super().datagram_received(data, addr):
-            print(self.drop_config)
             return True
 
         hyperdata, content = PacketBuilder.from_bytes(data)
@@ -307,3 +307,136 @@ class AlphabetProtocol(BidirectionalProtocol):
         state_type = StateMachineFactory.get_state_type(SMP(_protocol))
         remaining_data = data[4:] if len(data) > 4 else None
         return Hyperdata(owner=Identity(_owner), protocol=SMP(_protocol), state=state_type(_state)), Data(remaining_data)
+
+
+class TreeProtocol(DDLSymmetric):
+    def __init__(
+        self,
+        read_q: PipeQueue=None,
+        write_q: PipeQueue=None,
+        signal_q: PipeQueue=None,
+        logger=None,
+        is_client=False
+    ):
+        super().__init__(logger, is_client=is_client)
+        self.state_machine = TwoPhaseCommitPipeStateMachine(read_q, write_q, logger=logger)
+        self.read_q = read_q
+        self.write_q = write_q
+        self.signal_q = signal_q
+        self.drops = 0
+        self.timed_out = False
+        if (is_client):
+            asyncio.create_task(self.check_timeout_client())
+        else:
+            asyncio.create_task(self.check_timeout_server())
+
+    def __repr__(self):
+        return f"LivenessProtocol(state_machine={self.state_machine}, is_client={self.is_client})"
+    
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        self.logger.debug(f"[LINK_PROTOCOL] ---- Received packet: {data} ---- ")
+        if self.drops > 0:
+            self.drops -= 1
+            return
+        if self._handle_init_packet(data, addr):
+            return
+        super().datagram_received(data, addr)
+
+        hyperdata, content = self._parse_hyperdata(data)
+        new_data = self.state_machine.evaluate_transition(hyperdata, content)
+        self.logger.debug(f"[DATAGRAM] Received: {hyperdata}. sending: {new_data}")
+        self.transport.sendto(new_data.to_bytes(), addr)
+
+    def _handle_init_packet(self, data: bytes, addr: tuple[str, int]) -> bool:
+        # First check if this is an init packet at all
+        if not data.startswith(b"INIT"):
+            return False
+        
+        try:
+            # Try to split and decode just the command portion
+            parts = data.split(b" ", 1)
+            command = parts[0].decode('utf-8')
+            session_id = parts[1].decode('utf-8') if len(parts) > 1 else None
+            
+            self.logger.debug(f"[LINK_PROTOCOL] Received init packet: command={command} session_id={session_id}")
+            
+            if command == "INIT":
+                self.logger.debug(f"[LINK_PROTOCOL] Sending INIT_ACK")
+                self.transport.sendto(b"INIT_ACK " + session_id.encode('utf-8'), addr)
+            elif command == "INIT_ACK":
+                if not session_id == self.session_id:
+                    return True  # Cancel session by dropping packet
+
+            self.logger.debug(f"[LINK_PROTOCOL] Sending initiate packet")
+            self.transport.sendto(self.state_machine.initiate(), addr)
+            return True
+            
+        except (ValueError, UnicodeDecodeError) as e:
+            self.logger.error(f"Error handling init packet: {e}")
+            return False
+    
+    def connection_made(self, transport):
+        self.transport = transport
+        if (self.is_client):
+            self.session_id = sha256(random.randbytes(16)).hexdigest()
+            self.logger.debug(f"[LINK_PROTOCOL] Sending INIT {self.session_id}")
+            self.transport.sendto(b"INIT " + self.session_id.encode('utf-8'))
+    
+    def _parse_hyperdata(self, data: bytes) -> tuple[Hyperdata, Data]:
+        _owner, _protocol, _state = struct.unpack(">BHB", data[:4])
+        state_type = StateMachineFactory.get_state_type(SMP(_protocol))
+        remaining_data = data[4:] if len(data) > 4 else None
+        return Hyperdata(owner=Identity(_owner), protocol=SMP(_protocol), state=state_type(_state)), Data(remaining_data)
+    
+    def _should_drop_packet(self):
+        if self.drop_config.mode != DropMode.NONE:
+            if self.drop_config.mode == DropMode.ONE:
+                self.drops = 2
+                self.drop_config.mode = DropMode.NONE
+            self.logger.debug("Dropping packet DropMode={}".format(self.drop_config.mode))
+            return True
+        return False
+    
+    def set_drop_mode(self, mode: DropMode):
+        self.drop_config.mode = mode
+    
+    def reset_protocol(self):
+        self.state_machine.reset()
+    
+    def create_packet(self):
+        self.session_id = sha256(random.randbytes(16)).hexdigest()
+        self.logger.debug(f"[LINK_PROTOCOL] Sending INIT {self.session_id}")
+        return b"INIT " + self.session_id.encode('utf-8')
+    
+    async def check_timeout_client(self, timeout=0.1):
+        self.logger.info("Started timeout routine")
+        while not self.disconnected_future.done():
+            elapsed_time = time.time() - self._last_recv_time
+            if elapsed_time > timeout:
+                self.logger.info("Timeout'd")
+                if self.transport and self.is_client:
+                    self.transport.close()
+                else:
+                    self.signal_q.put(Data(content=b"DISCONNECTED"))
+            
+            await asyncio.sleep(timeout)
+    
+    async def check_timeout_server(self, timeout=0.1):
+        self.logger.info("Started timeout routine")
+        while not self.disconnected_future.done():
+            elapsed_time = time.time() - self._last_recv_time
+            if elapsed_time > timeout:
+                if not self.timed_out:
+                    self.logger.info("Server timeout'd")
+                    self.signal_q.put(Data(content=b"DISCONNECTED"))
+                    self.timed_out = True
+            else:
+                if self.timed_out:
+                    self.logger.info("Server reconnected")
+                    self.signal_q.put(Data(content=b"CONNECTED")) 
+                    self.timed_out = False
+            
+            await asyncio.sleep(timeout)
+        
+    
+

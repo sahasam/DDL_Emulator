@@ -8,7 +8,11 @@ emulation to manually inject all different types of faults as present in clos ne
 The port abstraction is intended to be symmetric to all layers above, but due to limitations of UDP as
 the link prtocol, the client/server interactions are hidden below.
 """
-from hermes.protocol import ABPProtocol, AlphabetProtocol, LivenessProtocol, DropMode
+from dataclasses import dataclass
+import logging
+from hermes.machines.data import Data
+from hermes.algorithm import PipeQueue
+from hermes.protocol import ABPProtocol, AlphabetProtocol, LivenessProtocol, DropMode, TreeProtocol
 
 import threading
 import asyncio
@@ -112,4 +116,34 @@ class AlphabetPort(LivenessPort):
                 if transport:
                     transport.close()
                 print(f"Resetting {'Client to' if self.is_client else 'Server on'} {self.addr}")
+                await asyncio.sleep(1)
+
+class TreePort(LivenessPort):
+    def __init__(self, loop, logger, is_client, addr, name, read_q, write_q, signal_q, **kwargs):
+        super().__init__(loop, logger, is_client, addr, name, **kwargs)
+
+        self.read_q = read_q
+        self.write_q = write_q
+        self.signal_q = signal_q
+    
+    async def run_link(self):
+        while True:
+            try:
+                transport, self.protocol_instance = await self.loop.create_datagram_endpoint(
+                    lambda: TreeProtocol(
+                        read_q=self.read_q,
+                        write_q=self.write_q,
+                        signal_q=self.signal_q,
+                        logger=self.logger,
+                        is_client=self.is_client
+                    ), 
+                    remote_addr=self.remote_addr,
+                    local_addr=self.local_addr
+                )
+                self.signal_q.put(Data(content=b"CONNECTED"))
+                await self.protocol_instance.disconnected_future
+            finally:
+                if transport:
+                    transport.close()
+                self.signal_q.put(Data(content=b"DISCONNECTED"))
                 await asyncio.sleep(1)

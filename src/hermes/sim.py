@@ -7,7 +7,8 @@ Eventual Goal: Given an arbitrary description of a network topology with virtual
 create all threads, event loops, and logs for simulation
 """
 from collections import defaultdict
-from hermes.port import AlphabetPort, ThreadedUDPPort, LivenessPort
+from hermes.algorithm import PipeQueue, TreeAlgorithm
+from hermes.port import AlphabetPort, ThreadedUDPPort, LivenessPort, TreePort
 from hermes.server import WebSocketServer
 
 import asyncio
@@ -18,6 +19,7 @@ class Sim:
     def __init__(self, log_dir='/opt/hermes/logs', protocol='liveness'):
         self.threads = []
         self.loops = []
+        self.queues = []
         self.port_manager = PortManager()
         self.server = None
         self.log_dir = log_dir
@@ -71,6 +73,20 @@ class Sim:
                 port_thread = ThreadedUDPPort(loop, logger, port['type'] == 'client', (port['ip'], port['port'] or 55555), name=port['name'])
             elif sim.protocol == 'alphabet':
                 port_thread = AlphabetPort(loop, logger, port['type'] == 'client', (port['ip'], port['port'] or 55555), name=port['name'])
+            elif sim.protocol == 'tree':
+                read_q = PipeQueue()
+                write_q = PipeQueue()
+                signal_q = PipeQueue()
+                sim.queues.extend([read_q, write_q, signal_q])
+                port_thread = TreePort(
+                    loop,
+                    logger,
+                    port['type'] == 'client',
+                    (port['ip'], port['port'] or 55555),
+                    name=port['name'],
+                    read_q=read_q, write_q=write_q, signal_q=signal_q
+                )
+                sim.port_manager.add_port(port['name'], port_thread)
             else:
                 raise ValueError(f"Invalid protocol: {sim.protocol}")
             
@@ -78,6 +94,8 @@ class Sim:
             sim.threads.append(port_thread)
             sim.loops.append(loop)
         
+        if sim.protocol == 'tree':
+            sim.threads.append(TreeAlgorithm(port_manager=sim.port_manager))
         return sim
     
 
@@ -85,7 +103,7 @@ class Sim:
         try:
             for thread in self.threads:
                 thread.start()
-                time.sleep(0.1)
+                time.sleep(0.05)
             
             loop = asyncio.get_event_loop()
             self.port_manager.start()
@@ -121,6 +139,9 @@ class Sim:
         if self.port_manager:
             self.port_manager._stop_event.set()
         
+        for queue in self.queues:
+            queue.close()
+        
         # Close all thread transports
         for thread in self.threads:
             if thread.protocol_instance and thread.protocol_instance.transport:
@@ -141,11 +162,11 @@ class Sim:
 class PortManager:
     def __init__(self, ports:dict[str, ThreadedUDPPort]={}):
         self.command_queue = asyncio.Queue()
-        self.ports = ports
+        self.ports = ports # dict of port name to port objects
         self._stop_event = asyncio.Event()
         self.websocket_server = None
     
-    def add_port(self, name, port):
+    def add_port(self, name: str, port: ThreadedUDPPort):
         self.ports[name] = port
     
     def start(self):
@@ -162,8 +183,6 @@ class PortManager:
                     port_name = cmd.get('port')
                     action = cmd.get('action')
 
-                    print(port_name, action)
-                    
                     if port_name in self.ports:
                         port = self.ports[port_name]
                         if action == 'DROP':
@@ -186,12 +205,12 @@ class PortManager:
             await self.websocket_server.send_updates(snapshots, tree)
     
     def get_snapshots(self):
-        snapshots = [] 
+        snapshots = []
         for _, port in self.ports.items():
             snapshots.append(port.get_snapshot())
         return snapshots
     
     def get_tree(self):
-        nodes = ["me", "A", "B", "C"]
+        nodes = ["me", "LAX", "SFO", "ORD"]
         edges = [(0,1), (1,2), (0,3)]
         return (nodes, edges)

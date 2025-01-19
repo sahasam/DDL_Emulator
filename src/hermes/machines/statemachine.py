@@ -1,87 +1,11 @@
-from abc import ABC, abstractmethod
-from enum import Enum
 from typing import OrderedDict
 
 import asyncio
 
-from hermes.machines.common import SMP, Identity
+from hermes.machines.common import SMP, Identity, State, Q
 from hermes.machines.data import Data, Hyperdata, PacketBuilder
-
-class Q(asyncio.Queue):
-    def __init__(self, *args, **kwargs):
-        super().__init__(maxsize=2, *args, **kwargs)
-
-class State(Enum):
-    @classmethod
-    def initial_state(cls):
-        for state in cls:
-            if isinstance(state.value, tuple) and len(state.value) > 1 and state.value[1] == "INIT":
-                return state
-        raise NotImplementedError("No initial state defined")
-    
-    def __int__(self):
-        if isinstance(self.value, tuple):
-            return self.value[0]
-        elif isinstance(self.value, (int, float)):
-            return self.value
-        raise ValueError(f"Cannot convert {self.value} of type {type(self.value)} to int")
-
-    @classmethod
-    def _missing_(cls, value):
-        # Handle conversion from int to State
-        if isinstance(value, int):
-            for member in cls:
-                if int(member) == value:
-                    return member
-        return None
-
-class Transition(ABC):
-    @abstractmethod
-    def evaluate_sync(self, content: Data=None) -> None | Enum:
-        raise NotImplementedError
-
-class DirectTransition(Transition):
-    def __init__(self, next_state: State, logger=None):
-        self.next_state = next_state
-        self.logger = logger
-    
-    def evaluate_sync(self, content: Data=None) -> None | tuple[Enum, Data]:
-        if self.logger is not None:
-            self.logger.debug(f"[DIRECT_TRANSITION] Transitioning to {self.next_state}")
-        return self.next_state, None
-
-class ReadQueueTransition(Transition):
-    def __init__(self, next_state: Enum, queue: asyncio.Queue, logger=None):
-        self.next_state = next_state
-        self.queue = queue
-        self.logger = logger
-    
-    def evaluate_sync(self, content: Data=None) -> None | tuple[Enum, Data]:
-        """
-        Returns the next state and the data to be sent to the next state.
-        If the parent state machine is not ready to transition, returns None.
-        """
-        if self.queue.empty():
-            if self.logger is not None:
-                self.logger.debug(f"[READ_QUEUE_TRANSITION] Queue is empty")
-            return None
-        if self.logger is not None:
-            self.logger.debug(f"[READ_QUEUE_TRANSITION] Transitioning to {self.next_state}")
-        return (self.next_state, self.queue.get_nowait())
-
-class WriteQueueTransition(Transition):
-    def __init__(self, next_state: Enum, queue: asyncio.Queue, logger=None):
-        self.next_state = next_state
-        self.queue = queue
-        self.logger = logger
-    
-    def evaluate_sync(self, content: Data=None) -> None | tuple[Enum, Data]:
-        self.queue.put_nowait(content)
-        if self.logger:
-            self.logger.debug(f"[WRITE_QUEUE_TRANSITION] Transitioning to {self.next_state}")
-        return (self.next_state, None)
-
-
+from hermes.machines.transitions import ReadPipeQueueTransition, Transition, DirectTransition, ReadQueueTransition, WritePipeQueueTransition, WriteQueueTransition
+from hermes.algorithm import PipeQueue
 
 class StateMachine:
     """
@@ -96,7 +20,7 @@ class StateMachine:
         self.states_type = states_type
         self.state = states_type.initial_state()
         self.updates = 0
-        self.last_data = None
+        self.last_data = {}
         self.logger = logger
 
     def evaluate_transition(self, hyperdata: Hyperdata | None, content: Data=None) -> bytes | None:
@@ -168,6 +92,39 @@ class TwoPhaseCommitStateMachine(StateMachine):
             .build() \
             .to_bytes()
 
+class TwoPhaseCommitPipeQueueStateMachine(StateMachine):
+    class S(State):
+        READ = (0, "INIT")
+        WRITE = 1
+        A1 = 2
+        A2 = 3
+
+    def __init__(self, read_q: PipeQueue, write_q: PipeQueue, logger=None):
+        super().__init__(self.S, {
+            self.S.READ: ReadPipeQueueTransition(self.S.WRITE, write_q, logger=logger),
+            self.S.WRITE: WritePipeQueueTransition(self.S.A1, read_q, logger=logger),
+            self.S.A1: DirectTransition(self.S.A2, logger=logger),
+            self.S.A2: DirectTransition(self.S.READ, logger=logger),
+        }, SMP.TWO_PHASE_COMMIT_PIPE_QUEUE, logger=logger)
+        self.read_q = read_q,
+        self.write_q = write_q
+    
+    def initiate(self) -> bytes | None:
+        if self.write_q.empty():
+            if self.logger is not None:
+                self.logger.debug(f"[TWO_PHASE_COMMIT_PIPE_QUEUE] Initiate: Write queue is empty")
+            return None
+
+        content = self.write_q.get()
+        if self.logger is not None:
+            self.logger.debug(f"[TWO_PHASE_COMMIT_PIPE_QUEUE] Initiate: Sending data: {content}")
+        
+        return PacketBuilder() \
+            .with_hyperdata(Hyperdata(owner=Identity.NOT_ME, protocol=SMP.TWO_PHASE_COMMIT_PIPE_QUEUE, state=self.S.WRITE)) \
+            .with_content(content) \
+            .build() \
+            .to_bytes()
+
 class AlphabetStateMachine(StateMachine):
     def __init__(self, logger=None):
         self.read_q = Q()
@@ -212,7 +169,7 @@ class AlphabetStateMachine(StateMachine):
             if _hyperdata is not None:
                 result = self.state_machines[SMP.TWO_PHASE_COMMIT].evaluate_transition(_hyperdata, _content)
                 if result is not None:
-                    self.logger.debug(f"[ALPHABET] Transitioning -- TWO_PHASE_COMMIT")
+                    self.logger.debug(f"[ALPHABET] Transitioning TWO_PHASE_COMMIT {_hyperdata.state} -> {_hyperdata.state}")
                     self.state_machines[SMP.TWO_PHASE_COMMIT].last_data = None
                     return result
                 else:
@@ -239,10 +196,66 @@ class AlphabetStateMachine(StateMachine):
         for _, sm in self.state_machines.items():
             sm.reset()
 
+
+
+class TwoPhaseCommitPipeStateMachine(StateMachine):
+    def __init__(self, read_q: PipeQueue, write_q: PipeQueue, logger=None):
+        self.logger = logger
+        self.read_q = read_q
+        self.write_q = write_q
+        self.state_machines = OrderedDict({
+            SMP.TWO_PHASE_COMMIT_PIPE_QUEUE: TwoPhaseCommitPipeQueueStateMachine(self.read_q, self.write_q, logger=logger),
+            SMP.LIVENESS: LivenessStateMachine(logger=logger)
+        })
+        # Initialize last_data for each state machine
+        for sm in self.state_machines.values():
+            sm.last_data = {}
+
+    def evaluate_transition(self, hyperdata: Hyperdata, content: Data=None) -> bytes:
+        # Store the hyperdata in the corresponding state machine
+        target_sm = self.state_machines.get(hyperdata.protocol)
+        if not target_sm:
+            raise ValueError(f"No state machine found for protocol {hyperdata.protocol}")
+        self.logger.debug(f"[ALPHABET] hyperdata={hyperdata} content={content} target_sm={target_sm}")
+        target_sm.last_data[hyperdata.owner] = (hyperdata, content)
+
+        # Evaluate state machines in priority order (earlier in ordered dict = higher priority)
+        if self.state_machines[SMP.TWO_PHASE_COMMIT_PIPE_QUEUE].last_data[hyperdata.owner] is not None:
+            self.logger.debug(f"[ALPHABET] Two Phase Commit Packet Data Found")
+            _hyperdata, _content = self.state_machines[SMP.TWO_PHASE_COMMIT_PIPE_QUEUE].last_data[hyperdata.owner]
+            if _hyperdata is not None:
+                result = self.state_machines[SMP.TWO_PHASE_COMMIT_PIPE_QUEUE].evaluate_transition(_hyperdata, _content)
+                if result is not None:
+                    self.logger.debug(f"[ALPHABET] Transitioning TWO_PHASE_COMMIT {_hyperdata.state} -> {_hyperdata.state}")
+                    self.state_machines[SMP.TWO_PHASE_COMMIT_PIPE_QUEUE].last_data[hyperdata.owner] = None
+                    return result
+                else:
+                    self.logger.debug(f"[ALPHABET] Failed to transition two-phase-commit")
+
+        if hyperdata.owner in self.state_machines[SMP.LIVENESS].last_data and self.state_machines[SMP.LIVENESS].last_data[hyperdata.owner] is not None:
+            self.logger.debug(f"[ALPHABET] Liveness token used instead")
+            _hyperdata, _content = self.state_machines[SMP.LIVENESS].last_data[hyperdata.owner]
+            self.state_machines[SMP.LIVENESS].last_data[hyperdata.owner] = None
+            return self.state_machines[SMP.LIVENESS].evaluate_transition(_hyperdata)
+        else:
+            self.logger.debug(f"[ALPHABET] Liveness token created")
+            return self.state_machines[SMP.LIVENESS].initiate()
+        
+    
+    def initiate(self) -> bytes:
+        self.write_q.put(Data(content=b'a'))
+        self.logger.debug("[ALPHABET] Initializing Packet")
+        return self.state_machines[SMP.TWO_PHASE_COMMIT_PIPE_QUEUE].initiate()
+    
+    def reset(self):
+        for _, sm in self.state_machines.items():
+            sm.reset()
+
 class StateMachineFactory:
     _state_machine_map = {
         SMP.LIVENESS: LivenessStateMachine,
-        SMP.TWO_PHASE_COMMIT: TwoPhaseCommitStateMachine
+        SMP.TWO_PHASE_COMMIT: TwoPhaseCommitStateMachine,
+        SMP.TWO_PHASE_COMMIT_PIPE_QUEUE: TwoPhaseCommitPipeQueueStateMachine
     }
 
     @classmethod

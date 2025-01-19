@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import struct
+from typing import Literal
 
 from hermes.machines.common import Identity, SMP
 
@@ -16,16 +17,16 @@ class Data:
 
         return Data(self.to_bytes() + other.to_bytes())
 
+class TreePacketData(Data):
+    type: Literal["TREE_BUILD", "TREE_BOUNDARY"] = None
+
+
 @dataclass
 class Hyperdata(Data):
     owner: Identity = None
     protocol: SMP = None 
     state: int = None
     
-    @classmethod
-    def from_bytes(cls, data: bytes):
-        raise NotImplementedError
-
     def to_bytes(self) -> bytes:
         state_value = int(self.state)
         return struct.pack(">BHB", self.owner.value, self.protocol.value, state_value)
