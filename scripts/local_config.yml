@@ -7,10 +7,16 @@ config:
     charlie: info
 ports:
   - name: alice
+    port_implementation: symmetric
+    interface: en3
+    type: something
+  - name: bob
+    port_implementation: predefined
     ip: 127.0.0.1
     port: 55550
     type: client
   - name: charlie
+    port_implementation: predefined
     ip: 127.0.0.1
     port: 55550
     type: server

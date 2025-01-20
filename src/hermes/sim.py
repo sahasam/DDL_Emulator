@@ -8,12 +8,14 @@ create all threads, event loops, and logs for simulation
 """
 from collections import defaultdict
 from hermes.algorithm import PipeQueue, TreeAlgorithm
-from hermes.port import AlphabetPort, ThreadedUDPPort, LivenessPort, TreePort
+from hermes.port import AlphabetPort, PortConfig, SymmetricPort, ThreadedUDPPort, LivenessPort, TreePort
 from hermes.server import WebSocketServer
 
 import asyncio
 import time
 import logging
+
+from hermes.util import get_ipv6_neighbors
 
 class Sim:
     def __init__(self, log_dir='/opt/hermes/logs', protocol='liveness'):
@@ -78,15 +80,24 @@ class Sim:
                 write_q = PipeQueue()
                 signal_q = PipeQueue()
                 sim.queues.extend([read_q, write_q, signal_q])
-                port_thread = TreePort(
-                    loop,
-                    logger,
-                    port['type'] == 'client',
-                    (port['ip'], port['port'] or 55555),
-                    name=port['name'],
-                    read_q=read_q, write_q=write_q, signal_q=signal_q
-                )
-                sim.port_manager.add_port(port['name'], port_thread)
+
+                if port['port_implementation'] == "symmetric":
+                    config = PortConfig(loop=loop, logger=logger, interface=port['interface'], name=port['name'])
+                    port_thread = SymmetricPort(
+                        config=config,
+                        read_q=read_q, write_q=write_q, signal_q=signal_q
+                    )
+                    sim.port_manager.add_port(port['name'], port_thread)
+                else:
+                    port_thread = TreePort(
+                        loop,
+                        logger,
+                        port['type'] == 'client',
+                        (port['ip'], port['port'] or 55555),
+                        name=port['name'],
+                        read_q=read_q, write_q=write_q, signal_q=signal_q
+                    )
+                    sim.port_manager.add_port(port['name'], port_thread)
             else:
                 raise ValueError(f"Invalid protocol: {sim.protocol}")
             

@@ -1,5 +1,4 @@
 import asyncio
-import subprocess
 from typing import Optional, List
 
 async def run_subprocess(command: list, timeout: int = 10) -> str:
@@ -11,11 +10,21 @@ async def run_subprocess(command: list, timeout: int = 10) -> str:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         
         if proc.returncode != 0:
-            raise Exception(f"Command failed: {stderr.decode()}")
+            # Check if the error message matches the specific error you want to catch
+            error_message = stderr.decode().strip()
+            if "Can't assign requested address" in error_message:
+                # Handle the specific error, maybe log it or just return a fallback value
+                return ""  # or return a fallback value, depending on your use case
+            else:
+                # Raise for other types of errors
+                raise Exception(f"Command failed with error: {error_message}")
         
         return stdout.decode()
     except asyncio.TimeoutError:
         print(f"Command timed out after {timeout} seconds")
+        return ""
+    except asyncio.CancelledError:
+        print("Command failed...")
         return ""
     except Exception as e:
         print(f"Error running subprocess: {e}")
@@ -69,7 +78,6 @@ async def get_ipv6_neighbors(interface: str) -> Optional[List[str]]:
     output = await run_subprocess(command, timeout=5)  # 5 seconds timeout for ip -6 neighbor
     
     if not output:
-        print("No neighbor entries found.")
         return None
     
     # Extract link-local neighbors (addresses starting with 'fe80::')
@@ -109,22 +117,27 @@ async def get_ipv6_neighbors(interface: str) -> Optional[List[str]]:
             sorted_neighbors.append((address, address_type, "client"))
 
     return sorted_neighbors if sorted_neighbors else None
-
-def main(interface: str):
-    """Main function to fetch IPv6 neighbors on a given interface."""
-    try:
-        result = asyncio.run(get_ipv6_neighbors(interface))
-
-        if result:
-            print(f"IPv6 addresses on {interface}:")
-            for ipv6_address, address_type, role in result:
-                print(f"{address_type.capitalize()} ({role}): {ipv6_address}")
-        else:
-            print(f"No IPv6 addresses found on {interface}.")
-    except Exception as e:
-        print(f"Error: {e}")
+    
 
 if __name__ == "__main__":
     # Specify the interface to query (e.g., 'eth0', 'en0', etc.)
     interface = 'en3'  # Replace with your interface name (e.g., 'eth0', 'en0', etc.)
-    main(interface)
+    
+    while True:
+        try:
+            result = asyncio.run(get_ipv6_neighbors(interface))
+
+            if result:
+                print(f"IPv6 addresses on {interface}:")
+                for ipv6_address, address_type, role in result:
+                    print(f"{address_type.capitalize()} ({role}): {ipv6_address}")
+            else:
+                print(f"No IPv6 addresses found on {interface}. Retrying...")
+        
+        except Exception as e:
+            print(f"Error: {e}")
+            # Optionally, wait or handle retries in case of an error
+            print("Retrying after an error...")
+
+        # Add a sleep here to avoid tight looping and unnecessary CPU usage
+        asyncio.run(asyncio.sleep(1))  # Wait for 2 seconds before retrying (you can adjust the time)
