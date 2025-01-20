@@ -8,15 +8,13 @@ config:
 ports:
   - name: alice
     port_implementation: symmetric
-    interface: en3
+    interface: en2
     type: something
   - name: bob
-    port_implementation: predefined
-    ip: 127.0.0.1
-    port: 55550
-    type: client
+    port_implementation: symmetric
+    interface: en3
+    type: something
   - name: charlie
-    port_implementation: predefined
-    ip: 127.0.0.1
-    port: 55550
-    type: server
+    port_implementation: symmetric
+    interface: en4
+    type: something

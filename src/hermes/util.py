@@ -27,7 +27,7 @@ async def run_subprocess(command: list, timeout: int = 10) -> str:
         print("Command failed...")
         return ""
     except Exception as e:
-        print(f"Error running subprocess: {e}")
+        # print(f"Error running subprocess: {e}")
         return ""
 
 async def ping_broadcast(interface: str, broadcast_address: str) -> bool:
@@ -108,13 +108,15 @@ async def get_ipv6_neighbors(interface: str) -> Optional[List[str]]:
     
     # Add 'client' or 'server' based on lexicographical order
     sorted_neighbors = []
+    if len(all_addresses) != 2:
+        return None
+    
     for address in all_addresses:
         address_type = address_types[address]
-        # Assign "client" if the address comes before the local addresses lexicographically
-        if address in local_addresses:
-            sorted_neighbors.append((address, address_type, "server"))
-        else:
-            sorted_neighbors.append((address, address_type, "client"))
+        # Compare against the other address to determine client/server
+        other_address = all_addresses[1] if address == all_addresses[0] else all_addresses[0]
+        role = "client" if address < other_address else "server"
+        sorted_neighbors.append((address, address_type, role))
 
     return sorted_neighbors if sorted_neighbors else None
     
