@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.daedaelus.hermes</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/bash</string>
+      <string>/Users/<USERNAME>/dev/DDL_Emulator/scripts/update_and_run_code.sh</string>
+    </array>
+    
+    <key>UserName</key>
+    <string><USERNAME></string>
+    
+    <!-- Run at boot -->
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <!-- Ensure it stays running if it dies (optional) -->
+    <key>KeepAlive</key>
+    <true/>
+    
+    <!-- Log output (stdout/stderr) -->
+    <key>StandardOutPath</key>
+    <string>/tmp/com.daedaelus.hermes.stdout</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/com.daedaelus.hermes.stderr</string>
+    
+    <!-- Environment variables (optional) -->
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PATH</key>
+      <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+  </dict>
+</plist>

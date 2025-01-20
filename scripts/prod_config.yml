@@ -1,0 +1,20 @@
+config:
+  protocol: tree
+  log_dir: ./logs
+  log_level:
+    websocket_server: info
+    alice: info
+    charlie: info
+ports:
+  - name: alice
+    port_implementation: symmetric
+    interface: en2
+    type: something
+  - name: bob
+    port_implementation: symmetric
+    interface: en3
+    type: something
+  - name: charlie
+    port_implementation: symmetric
+    interface: en4
+    type: something
