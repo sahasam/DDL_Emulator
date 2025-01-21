@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
       <string>/bin/bash</string>
-      <string>/Users/<USERNAME>/dev/DDL_Emulator/scripts/update_and_run_code.sh</string>
+      <string>/Users/<USERNAME>/dev/singlelink_ddl_py/scripts/update_and_run_code.sh</string>
     </array>
     
     <key>UserName</key>
@@ -23,10 +23,13 @@
     
     <!-- Log output (stdout/stderr) -->
     <key>StandardOutPath</key>
-    <string>/tmp/com.daedaelus.hermes.stdout</string>
+    <string>/Users/<USERNAME>/dev/singlelink_ddl_py/logs/hermes.stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/tmp/com.daedaelus.hermes.stderr</string>
+    <string>/Users/<USERNAME>/dev/singlelink_ddl_py/logs/hermes.stderr.log</string>
+
+    <key>Debug</key>
+    <true/>
     
     <!-- Environment variables (optional) -->
     <key>EnvironmentVariables</key>

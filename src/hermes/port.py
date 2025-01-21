@@ -248,7 +248,14 @@ class SymmetricPort(ThreadedUDPPort):
                 "ip": "disconnected",
                 "port": "disconnected",
                 "type": "client" if self.is_client else "server",
-                "link": "NONE"
+                "link": {
+                    "status": "disconnected",
+                    "statistics": {
+                        "events": 0,
+                        "round_trip_latency": 999999.0,
+                        "pps": 0
+                    }
+                }
             }
 
         return {

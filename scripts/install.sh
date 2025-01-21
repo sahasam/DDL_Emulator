@@ -4,7 +4,7 @@
 USER_NAME=$(whoami)
 
 # Define the path to the plist template
-PLIST_TEMPLATE="/Users/$USER_NAME/dev/DDL_Emulator/com.daedaelus.hermes.plist"
+PLIST_TEMPLATE="/Users/$USER_NAME/dev/singlelink_ddl_py/com.daedaelus.hermes.plist"
 
 # Define the path where the plist file will be installed
 INSTALL_PATH="/Library/LaunchDaemons/com.daedaelus.hermes.plist"
