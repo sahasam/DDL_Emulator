@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Directory of your project
-PROJECT_DIR="$HOME/dev/singlelink_ddl_py"
+PROJECT_DIR="/opt/hermes"
 LOGS_DIR="$PROJECT_DIR/logs"
 
 # Create the logs directory if it doesn't exist
@@ -23,8 +23,6 @@ if [ $? -eq 0 ]; then
 else
   echo "Git pull failed (likely due to no internet access). Running the existing code..."
 fi
-
-
 
 # Run the code (assuming it's a script or app you can execute directly)
 # Modify this command as necessary to run your actual application
