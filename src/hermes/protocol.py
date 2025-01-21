@@ -425,6 +425,11 @@ class TreeProtocol(DDLSymmetric):
         self.logger.info("Started timeout routine")
         while not self.disconnected_future.done():
             elapsed_time = time.time() - self._last_recv_time
+            if elapsed_time > 5:
+                self.logger.info("Server shutting down")
+                self.transport.close()
+                return
+
             if elapsed_time > timeout:
                 if not self.timed_out:
                     self.logger.info("Server timeout'd")

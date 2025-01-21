@@ -214,13 +214,12 @@ class SymmetricPort(ThreadedUDPPort):
                         self.config.logger.info(f"Found Neighbor. Running Details: is_client={self.is_client}, remote_addr={self.remote_addr}, local_addr={self.local_addr}")
                         neighbor_connected = True
                         continue
-                    else:
-                        self.config.logger.info(f"No IPv6 addresses found on {self.config.interface}. Retrying...")
                 
                 except Exception as e:
                     self.config.logger.info(f"Error: {e}")
                     asyncio.run(asyncio.sleep(0.5))
 
+            transport = None
             try:
                 transport, self.protocol_instance = await self.loop.create_datagram_endpoint(
                     lambda: TreeProtocol(
@@ -238,6 +237,10 @@ class SymmetricPort(ThreadedUDPPort):
             finally:
                 if transport:
                     transport.close()
+                
+                self.remote_addr = None
+                self.local_addr = None
+                self.is_client = False
                 self.signal_q.put(Data(content=b"DISCONNECTED"))
                 await asyncio.sleep(1)
 

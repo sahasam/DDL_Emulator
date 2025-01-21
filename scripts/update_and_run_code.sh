@@ -29,5 +29,4 @@ fi
 # Run the code (assuming it's a script or app you can execute directly)
 # Modify this command as necessary to run your actual application
 # ./your_application_or_script.sh  # Modify this line to run your app
-$PROJECT_DIR/env/bin/python3 $PROJECT_DIR/src/main.py -c $PROJECT_DIR/scripts/prod_config.yml
-
+$PROJECT_DIR/env/bin/python3 -u $PROJECT_DIR/src/main.py -c $PROJECT_DIR/scripts/prod_config.yml
