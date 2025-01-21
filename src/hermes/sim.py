@@ -176,6 +176,10 @@ class PortManager:
         self.ports = ports # dict of port name to port objects
         self._stop_event = asyncio.Event()
         self.websocket_server = None
+        self.tree = {
+            'nodes': ["ME"],
+            'edges': [],
+        }
     
     def add_port(self, name: str, port: ThreadedUDPPort):
         self.ports[name] = port
@@ -221,7 +225,8 @@ class PortManager:
             snapshots.append(port.get_snapshot())
         return snapshots
     
+    def set_tree(self, tree):
+        self.tree = tree
+    
     def get_tree(self):
-        nodes = ["me", "LAX", "SFO", "ORD"]
-        edges = [(0,1), (1,2), (0,3)]
-        return (nodes, edges)
+        return (self.tree['nodes'], self.tree['edges'])

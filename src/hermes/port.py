@@ -238,6 +238,10 @@ class SymmetricPort(ThreadedUDPPort):
                 self.signal_q.put(Data(content=b"CONNECTED"))
                 await self.protocol_instance.disconnected_future
             except ValueError as e:
+                print(e)
+                pass
+            except OSError as e:
+                print(e)
                 pass
             finally:
                 if transport:

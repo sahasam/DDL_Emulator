@@ -6,7 +6,7 @@ import struct
 import time
 from enum import Enum
 
-from hermes.machines.data import Data, Hyperdata, PacketBuilder
+from hermes.machines.data import Data, Hyperdata, PacketBuilder, TreeBoundaryData, TreeBuildData
 from hermes.machines.statemachine import AlphabetStateMachine, LivenessStateMachine, StateMachine, StateMachineFactory, TwoPhaseCommitPipeStateMachine
 from hermes.machines.common import SMP, Identity
 from hermes.algorithm import PipeQueue
@@ -386,7 +386,8 @@ class TreeProtocol(DDLSymmetric):
         _owner, _protocol, _state = struct.unpack(">BHB", data[:4])
         state_type = StateMachineFactory.get_state_type(SMP(_protocol))
         remaining_data = data[4:] if len(data) > 4 else None
-        return Hyperdata(owner=Identity(_owner), protocol=SMP(_protocol), state=state_type(_state)), Data(remaining_data)
+        content = PacketBuilder.from_bytes(remaining_data)
+        return Hyperdata(owner=Identity(_owner), protocol=SMP(_protocol), state=state_type(_state)), content
     
     def _should_drop_packet(self):
         if self.drop_config.mode != DropMode.NONE:

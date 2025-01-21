@@ -18,10 +18,16 @@
 - name: Clear logs directory
   shell: "rm -rf /opt/hermes/logs/*"
 
-- name: Start main.py in background
-  shell: "/opt/hermes/venv/bin/python /opt/hermes/src/main.py --config-file /opt/hermes/config/config.yml > /opt/hermes/output.log 2>&1 & echo $!"
-  args:
-    chdir: /opt/hermes/src
-  async: 10
-  poll: 0
+# - name: Test network connectivity
+#   shell: ping -c 3 8.8.8.8
+#   register: ping_result
+#   ignore_errors: false
+
+# - name: Start main.py in background
+#   shell: "/opt/hermes/venv/bin/python /opt/hermes/src/main.py --config_file /opt/hermes/config/config.yml > /opt/hermes/output.log 2>&1 & echo $!"
+#   args:
+#     chdir: /opt/hermes
+#   environment:
+#     NODE_NAME: "{{ node_name }}"
+#   poll: 0
 

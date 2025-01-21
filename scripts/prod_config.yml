@@ -1,6 +1,6 @@
 config:
   protocol: tree
-  log_dir: ./logs
+  log_dir: /opt/hermes/logs
   log_level:
     websocket_server: info
     alice: info

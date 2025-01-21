@@ -27,7 +27,7 @@
 
 - name: Copy user config file to /opt/hermes/config
   ansible.builtin.copy:
-    src: "{{ project_root }}/scripts/{{ ansible_user }}_config.yml"
+    src: "{{ project_root }}/scripts/prod_config.yml"
     dest: /opt/hermes/config/config.yml
     force: yes
 
