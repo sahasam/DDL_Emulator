@@ -214,10 +214,13 @@ class SymmetricPort(ThreadedUDPPort):
                         self.config.logger.info(f"Found Neighbor. Running Details: is_client={self.is_client}, remote_addr={self.remote_addr}, local_addr={self.local_addr}")
                         neighbor_connected = True
                         continue
+                    else:
+                        self.config.logger.info(f"No neighbor Found {result}")
+                        await asyncio.sleep(0.15)
                 
                 except Exception as e:
                     self.config.logger.info(f"Error: {e}")
-                    asyncio.run(asyncio.sleep(0.5))
+                    await asyncio.sleep(0.5)
 
             transport = None
             try:
@@ -234,6 +237,8 @@ class SymmetricPort(ThreadedUDPPort):
                 )
                 self.signal_q.put(Data(content=b"CONNECTED"))
                 await self.protocol_instance.disconnected_future
+            except ValueError as e:
+                pass
             finally:
                 if transport:
                     transport.close()
