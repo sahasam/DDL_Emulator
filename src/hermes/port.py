@@ -159,17 +159,20 @@ class PortConfig:
     interface: str
     name: str
 
+@dataclass
+class PortIO:
+    read_q: PipeQueue
+    write_q: PipeQueue
+    signal_q: PipeQueue
 
 class SymmetricPort(ThreadedUDPPort):
-    def __init__(self, config: PortConfig, read_q: PipeQueue, write_q: PipeQueue, signal_q: PipeQueue, **kwargs):
+    def __init__(self, config: PortConfig, io: PortIO, **kwargs):
         # Pass **kwargs to the parent class constructor
         super().__init__(config.loop, config.logger, False, None, config.name, **kwargs)
         
         # Initialize the instance variables
         self.config = config
-        self.read_q = read_q
-        self.write_q = write_q
-        self.signal_q = signal_q
+        self.io = io
 
         self.is_client = False
         self.remote_addr = None

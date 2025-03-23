@@ -15,6 +15,7 @@ class SMP(Enum):
     LIVENESS = 0
     TWO_PHASE_COMMIT = 1
     TWO_PHASE_COMMIT_PIPE_QUEUE = 2
+    FSM_PIPE_QUEUE = 3
 
 class TokenEvent(asyncio.Event):
     def __init__(self):

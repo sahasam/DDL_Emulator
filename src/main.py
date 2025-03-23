@@ -1,3 +1,4 @@
+import sys
 from hermes.sim import Sim
 
 import argparse
@@ -23,5 +24,9 @@ if __name__ == "__main__":
 
     if args.config_file:
         config = load_config(args.config_file)
-        Sim.from_config(config).start()
+        try:
+            Sim.from_config(config).start()
+        except KeyboardInterrupt:
+            print("\nClosing gracefully...")
+            sys.exit(0)
         

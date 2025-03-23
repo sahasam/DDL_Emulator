@@ -8,7 +8,7 @@ create all threads, event loops, and logs for simulation
 """
 from collections import defaultdict
 from hermes.algorithm import PipeQueue, TreeAlgorithm
-from hermes.port import AlphabetPort, PortConfig, SymmetricPort, ThreadedUDPPort, LivenessPort, TreePort
+from hermes.port import AlphabetPort, PortConfig, PortIO, SymmetricPort, ThreadedUDPPort, LivenessPort, TreePort
 from hermes.server import WebSocketServer
 
 import asyncio
@@ -22,13 +22,19 @@ class Sim:
         self.threads = []
         self.loops = []
         self.queues = []
-        self.port_manager = PortManager()
+        self.ports = {}  # name -> port mapping
+        self.command_queue = asyncio.Queue()
         self.server = None
         self.log_dir = log_dir
         self.protocol = protocol
         self.log_level = defaultdict(lambda: logging.INFO)
+        self.tree = {
+            'nodes': ["ME"],
+            'edges': [],
+        }
+        self._stop_event = asyncio.Event()
     
-    def setup_logger(self, name, log_file, stdout=False, level=logging.INFO):
+    def _setup_logger(self, name, log_file, stdout=False, level=logging.INFO):
         """Set up a logger for a specific thread."""
         logger = logging.getLogger(name)
         logger.setLevel(level)
@@ -44,72 +50,99 @@ class Sim:
         logger.addHandler(handler)
         return logger
     
+    def _create_port(self, port_config: dict):
+        loop = asyncio.new_event_loop()
+        logger = self._setup_logger(
+            name=port_config['name'],
+            log_file=f"{self.log_dir}/{port_config['name']}.log",
+            stdout=False,
+            level=self.log_level[port_config['name']]
+        )
+        
+        read_q = PipeQueue()
+        write_q = PipeQueue()
+        signal_q = PipeQueue()
+        self.queues.extend([read_q, write_q, signal_q])
+
+        return SymmetricPort(
+                config=PortConfig(
+                    loop=loop,
+                    logger=logger,
+                    interface=port_config['interface'],
+                    name=port_config['name']
+                ),
+                io=PortIO(
+                    read_q=read_q,
+                    write_q=write_q, 
+                    signal_q=signal_q
+                )
+            )
 
     @classmethod
     def from_config(cls, config):
         """Given a config, create all threads, log files, and event loops for the simulation"""
         sim = cls()
-        if 'config' in config:
-            sim.log_dir = config['config']['log_dir']
-            sim.protocol = config['config']['protocol']
-            for name, level in config['config']['log_level'].items():
-                sim.log_level[name] = getattr(logging, level.upper())
 
+        # Extract config settings with defaults
+        config_settings = config.get('config', {})
+        sim.log_dir = config_settings.get('log_dir', '/opt/hermes/logs')
+        sim.protocol = config_settings.get('protocol', 'liveness')
+        
+        # set log levels
+        for name, level in config_settings.get('log_level', {}).items():
+            sim.log_level[name] = getattr(logging, level.upper())
+
+        # Create the WebSocket server
         sim.server = WebSocketServer(
-            command_queue=sim.port_manager.command_queue,
-            logger=sim.setup_logger("WebSocketServer", f"{sim.log_dir}/websocket_server.log", stdout=True, level=sim.log_level['websocket_server'])
+            command_queue=sim.command_queue,
+            logger=sim._setup_logger(
+                name="WebSocketServer",
+                log_file=f"{sim.log_dir}/websocket_server.log",
+                stdout=True,
+                level=sim.log_level['websocket_server']
+            )
         )
-        sim.port_manager.websocket_server = sim.server
+        # sim.threads.append(TreeAlgorithm(port_manager=sim.port_manager))
 
-        for port in config['ports']:
-            if port['type'] == 'disconnected':
+        for port_config in config['ports']:
+            if port_config.get('type', '') == 'disconnected':
                 continue
             
-            loop = asyncio.new_event_loop()
-            logger = sim.setup_logger(port['name'], f"{sim.log_dir}/{port['name']}.log", level=sim.log_level[port['name']])
-            print(logger)
-            port_thread = None
-            if sim.protocol == 'liveness':
-                port_thread = LivenessPort(loop, logger, port['type'] == 'client', (port['ip'], port['port'] or 55555), name=port['name'])
-            elif sim.protocol == 'abp':
-                port_thread = ThreadedUDPPort(loop, logger, port['type'] == 'client', (port['ip'], port['port'] or 55555), name=port['name'])
-            elif sim.protocol == 'alphabet':
-                port_thread = AlphabetPort(loop, logger, port['type'] == 'client', (port['ip'], port['port'] or 55555), name=port['name'])
-            elif sim.protocol == 'tree':
-                read_q = PipeQueue()
-                write_q = PipeQueue()
-                signal_q = PipeQueue()
-                sim.queues.extend([read_q, write_q, signal_q])
-
-                if port['port_implementation'] == "symmetric":
-                    config = PortConfig(loop=loop, logger=logger, interface=port['interface'], name=port['name'])
-                    port_thread = SymmetricPort(
-                        config=config,
-                        read_q=read_q, write_q=write_q, signal_q=signal_q
-                    )
-                    sim.port_manager.add_port(port['name'], port_thread)
-                else:
-                    port_thread = TreePort(
-                        loop,
-                        logger,
-                        port['type'] == 'client',
-                        (port['ip'], port['port'] or 55555),
-                        name=port['name'],
-                        read_q=read_q, write_q=write_q, signal_q=signal_q
-                    )
-                    sim.port_manager.add_port(port['name'], port_thread)
-            else:
-                raise ValueError(f"Invalid protocol: {sim.protocol}")
-            
-            sim.port_manager.add_port(port['name'], port_thread)
+            # Create a new event loop and logger for each port
+            port_thread = sim._create_port(port_config)
             sim.threads.append(port_thread)
-            sim.loops.append(loop)
         
-        if sim.protocol == 'tree':
-            sim.threads.append(TreeAlgorithm(port_manager=sim.port_manager))
         return sim
     
+    async def process_commands(self):
+        while not self._stop_event.is_set():
+            # Process all available messages
+            while True:
+                try:
+                    cmd = await self.command_queue.get()
+                    port_name = cmd.get('port')
+                    action = cmd.get('action')
 
+                    if port_name in self.ports:
+                        port = self.ports[port_name]
+                        if action == 'DROP':
+                            port.drop_one_packet()
+                        elif action == 'DISCONNECT':
+                            port.set_disconnected(True)
+                        elif action == 'CONNECT':
+                            port.set_disconnected(False)
+                        else:
+                            raise ValueError(f"Invalid action: {action}")
+                except Exception as e:
+                    print(f"Error processing command: {e}")
+
+    async def send_updates(self):
+        while not self._stop_event.is_set():
+            await asyncio.sleep(0.05)
+            snapshots = [port.get_snapshot() for port in self.ports.values()]
+            tree = (self.tree['nodes'], self.tree['edges'])
+            await self.websocket_server.send_updates(snapshots, tree)
+    
     def start(self):
         try:
             for thread in self.threads:
@@ -147,8 +180,9 @@ class Sim:
         """Clean up threads and loops"""
         print("\nPerforming cleanup...")
         # Stop the port manager
-        if self.port_manager:
-            self.port_manager._stop_event.set()
+        # if self.port_manager:
+        #     self.port_manager._stop_event.set()
+        self._stop_event.set()
         
         for queue in self.queues:
             queue.close()
@@ -169,64 +203,4 @@ class Sim:
         # Join all threads
         for thread in self.threads:
             thread.join()
-
-class PortManager:
-    def __init__(self, ports:dict[str, ThreadedUDPPort]={}):
-        self.command_queue = asyncio.Queue()
-        self.ports = ports # dict of port name to port objects
-        self._stop_event = asyncio.Event()
-        self.websocket_server = None
-        self.tree = {
-            'nodes': ["ME"],
-            'edges': [],
-        }
     
-    def add_port(self, name: str, port: ThreadedUDPPort):
-        self.ports[name] = port
-    
-    def start(self):
-        loop = asyncio.get_event_loop()
-        loop.create_task(self.process_commands())
-        loop.create_task(self.send_updates())
-        
-    async def process_commands(self):
-        while not self._stop_event.is_set():
-            # Process all available messages
-            while True:
-                try:
-                    cmd = await self.command_queue.get()
-                    port_name = cmd.get('port')
-                    action = cmd.get('action')
-
-                    if port_name in self.ports:
-                        port = self.ports[port_name]
-                        if action == 'DROP':
-                            port.drop_one_packet()
-                        elif action == 'DISCONNECT':
-                            port.set_disconnected(True)
-                        elif action == 'CONNECT':
-                            port.set_disconnected(False)
-                        else:
-                            raise ValueError(f"Invalid action: {action}")
-                except Exception as e:
-                    print(f"Error processing command: {e}")
-
-    async def send_updates(self):
-        while not self._stop_event.is_set():
-            await asyncio.sleep(0.75)
-            snapshots = self.get_snapshots()
-            tree = self.get_tree()
-
-            await self.websocket_server.send_updates(snapshots, tree)
-    
-    def get_snapshots(self):
-        snapshots = []
-        for _, port in self.ports.items():
-            snapshots.append(port.get_snapshot())
-        return snapshots
-    
-    def set_tree(self, tree):
-        self.tree = tree
-    
-    def get_tree(self):
-        return (self.tree['nodes'], self.tree['edges'])
