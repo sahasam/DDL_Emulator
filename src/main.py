@@ -1,5 +1,6 @@
+import asyncio
 import sys
-from hermes.sim import Sim
+from hermes.sim.Sim import Sim
 
 import argparse
 import yaml
@@ -24,8 +25,9 @@ if __name__ == "__main__":
 
     if args.config_file:
         config = load_config(args.config_file)
+        sim = Sim.from_config(config)
         try:
-            Sim.from_config(config).start()
+            asyncio.run(sim.run())
         except KeyboardInterrupt:
             print("\nClosing gracefully...")
             sys.exit(0)

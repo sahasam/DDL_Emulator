@@ -19,15 +19,14 @@ class WebSocketServer:
         host: str="0.0.0.0",
         port: int=6363,
         max_connections: int=5,
-        logger: logging.Logger=None,
         command_queue: queue.Queue=None,
     ):
         self.host = host
         self.port = port
         self.max_connections = max_connections
         self.active_connections = set()
-        self.logger = logger 
-        self.command_queue = command_queue
+        self.logger = logging.getLogger(__name__)
+        self.command_queue = command_queue or queue.Queue()
         self.loop = None # Event loop for the server
     
     async def handle_client(self, websocket):

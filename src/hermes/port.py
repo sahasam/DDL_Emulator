@@ -8,24 +8,24 @@ emulation to manually inject all different types of faults as present in clos ne
 The port abstraction is intended to be symmetric to all layers above, but due to limitations of UDP as
 the link prtocol, the client/server interactions are hidden below.
 """
-from dataclasses import dataclass
-from asyncio import AbstractEventLoop
-import logging
 from typing import Optional, Tuple
 from hermes.machines.data import Data
-from hermes.algorithm import PipeQueue
-from hermes.protocol import ABPProtocol, AlphabetProtocol, LivenessProtocol, DropMode, TreeProtocol
+from hermes.model.ports import PortConfig, PortIO
+from hermes.protocol import ABPProtocol, DropMode, TreeProtocol
 
+import logging
 import threading
 import asyncio
 
 from hermes.util import get_ipv6_neighbors
 
 class ThreadedUDPPort(threading.Thread):
-    def __init__(self, loop, logger, is_client, addr, name, **kwargs):
+    def __init__(self, logger: logging.Logger, is_client: bool, addr: Tuple[str, int], name: str, **kwargs):
         super().__init__(**kwargs)
-        self.loop = loop
-        self.logger = logger
+        self._loop = asyncio.new_event_loop()
+        # Create a handler for the logger that works with asyncio
+        self.logger = logging.getLogger("Port." + name)
+
         self.is_client = is_client
         self.addr = addr
         self.name = name
@@ -39,28 +39,44 @@ class ThreadedUDPPort(threading.Thread):
                 .format("Client" if self.is_client else "Server", self.name, *self.addr)
 
     def run(self):
-        self.loop.run_until_complete(self.loop.create_task(self.run_link()))
+        # Set up logging for this thread
+        self.logger.info(f"Starting UDP port thread for {self.name}")
+        asyncio.set_event_loop(self._loop)
+        # Ensure the loop has a handler for logging
+        try:
+            self._loop.create_task(self.run_link())
+            self._loop.run_forever()
+        except Exception as e:
+            self.logger.error(f"Error in port thread {self.name}: {e}")
+        finally:
+            self.logger.info(f"Shutting down UDP port thread for {self.name}")
+            self._loop.close()
     
     async def run_link(self):
+        self.logger.info(f"Running link for {self.name}")  # Changed from print to logger
         while True:
             transport = None
             try:
-                transport, self.protocol_instance = await self.loop.create_datagram_endpoint(
+                self.logger.debug(f"Creating datagram endpoint for {self.name}")  # Added debug logging
+                transport, self.protocol_instance = await self._loop.create_datagram_endpoint(
                     lambda: ABPProtocol(logger=self.logger, is_client=self.is_client), 
                     remote_addr=self.remote_addr,
                     local_addr=self.local_addr
                 )
+                self.logger.info(f"Endpoint created for {self.name}")  # Added success logging
                 await self.protocol_instance.disconnected_future
+            except Exception as e:
+                self.logger.error(f"Error in run_link for {self.name}: {e}")  # Added error logging
             finally:
                 if transport:
                     transport.close()
-                print(f"Resetting {'Client to' if self.is_client else 'Server on'} {self.addr}")
+                self.logger.info(f"Resetting {'Client to' if self.is_client else 'Server on'} {self.addr}")  # Changed from print to logger
                 await asyncio.sleep(1)
     
     def drop_one_packet(self):
         try:
             if self.protocol_instance:
-                self.loop.call_soon_threadsafe(
+                self._loop.call_soon_threadsafe(
                     self.protocol_instance.set_drop_mode,
                     DropMode.ONE
                 )
@@ -82,93 +98,11 @@ class ThreadedUDPPort(threading.Thread):
             "link": self.protocol_instance.get_link_status()
         }
 
-class LivenessPort(ThreadedUDPPort):
-    def __init__(self, loop, logger, is_client, addr, name, **kwargs):
-        super().__init__(loop, logger, is_client, addr, name, **kwargs)
-    
-    async def run_link(self):
-        while True:
-            transport = None
-            try:
-                transport, self.protocol_instance = await self.loop.create_datagram_endpoint(
-                    lambda: LivenessProtocol(logger=self.logger, is_client=self.is_client), 
-                    remote_addr=self.remote_addr,
-                    local_addr=self.local_addr
-                )
-                await self.protocol_instance.disconnected_future
-            finally:
-                if transport:
-                    transport.close()
-                print(f"Resetting {'Client to' if self.is_client else 'Server on'} {self.addr}")
-                await asyncio.sleep(1)
-
-class AlphabetPort(LivenessPort):
-    def __init__(self, loop, logger, is_client, addr, name, **kwargs):
-        super().__init__(loop, logger, is_client, addr, name, **kwargs)
-
-    async def run_link(self):
-        while True:
-            transport = None
-            try:
-                transport, self.protocol_instance = await self.loop.create_datagram_endpoint(
-                    lambda: AlphabetProtocol(logger=self.logger, is_client=self.is_client), 
-                    remote_addr=self.remote_addr,
-                    local_addr=self.local_addr
-                )
-                await self.protocol_instance.disconnected_future
-            finally:
-                if transport:
-                    transport.close()
-                print(f"Resetting {'Client to' if self.is_client else 'Server on'} {self.addr}")
-                await asyncio.sleep(1)
-
-class TreePort(LivenessPort):
-    def __init__(self, loop, logger, is_client, addr, name, read_q, write_q, signal_q, **kwargs):
-        super().__init__(loop, logger, is_client, addr, name, **kwargs)
-
-        self.read_q = read_q
-        self.write_q = write_q
-        self.signal_q = signal_q
-    
-    async def run_link(self):
-        while True:
-            try:
-                transport, self.protocol_instance = await self.loop.create_datagram_endpoint(
-                    lambda: TreeProtocol(
-                        read_q=self.read_q,
-                        write_q=self.write_q,
-                        signal_q=self.signal_q,
-                        logger=self.logger,
-                        is_client=self.is_client
-                    ), 
-                    remote_addr=self.remote_addr,
-                    local_addr=self.local_addr
-                )
-                self.signal_q.put(Data(content=b"CONNECTED"))
-                await self.protocol_instance.disconnected_future
-            finally:
-                if transport:
-                    transport.close()
-                self.signal_q.put(Data(content=b"DISCONNECTED"))
-                await asyncio.sleep(1)
-
-@dataclass
-class PortConfig:
-    loop: AbstractEventLoop
-    logger: logging.Logger
-    interface: str
-    name: str
-
-@dataclass
-class PortIO:
-    read_q: PipeQueue
-    write_q: PipeQueue
-    signal_q: PipeQueue
 
 class SymmetricPort(ThreadedUDPPort):
     def __init__(self, config: PortConfig, io: PortIO, **kwargs):
         # Pass **kwargs to the parent class constructor
-        super().__init__(config.loop, config.logger, False, None, config.name, **kwargs)
+        super().__init__(None, False, None, config.name, **kwargs)
         
         # Initialize the instance variables
         self.config = config
@@ -210,29 +144,31 @@ class SymmetricPort(ThreadedUDPPort):
             while not neighbor_connected:
                 try:
                     result = await get_ipv6_neighbors(self.config.interface)
+                    self.logger.info(f"Result: {result}")
 
                     if result:
                         self.is_client, self.remote_addr, self.local_addr = self.extract_running_details(result)
-                        self.config.logger.info(f"Found Neighbor. result={result}")
-                        self.config.logger.info(f"Found Neighbor. Running Details: is_client={self.is_client}, remote_addr={self.remote_addr}, local_addr={self.local_addr}")
+                        self.logger.info(f"Found Neighbor. result={result}")
+                        self.logger.info(f"Found Neighbor. Running Details: is_client={self.is_client}, remote_addr={self.remote_addr}, local_addr={self.local_addr}")
                         neighbor_connected = True
                         continue
                     else:
-                        self.config.logger.info(f"No neighbor Found {result}")
                         await asyncio.sleep(0.15)
+                    
+                    self.logger.info(f"No neighbor Found {result}")
                 
                 except Exception as e:
-                    self.config.logger.info(f"Error: {e}")
+                    self.logger.info(f"Error: {e}")
                     await asyncio.sleep(0.5)
 
             transport = None
             try:
-                transport, self.protocol_instance = await self.loop.create_datagram_endpoint(
+                transport, self.protocol_instance = await self._loop.create_datagram_endpoint(
                     lambda: TreeProtocol(
                         read_q=self.read_q,
                         write_q=self.write_q,
                         signal_q=self.signal_q,
-                        logger=self.config.logger,
+                        logger=self.logger,
                         is_client=self.is_client
                     ), 
                     remote_addr=self.remote_addr,
@@ -280,3 +216,11 @@ class SymmetricPort(ThreadedUDPPort):
             "type": "client" if self.is_client else "server",
             "link": self.protocol_instance.get_link_status()
         }
+
+class EmulatedPort(ThreadedUDPPort):
+    def __init__(self, config: PortConfig, io: PortIO, **kwargs):
+        super().__init__(config.loop, config.logger, False, None, config.name, **kwargs)
+
+        self.config = config
+        self.io = io
+        
