@@ -26,9 +26,5 @@ if __name__ == "__main__":
     if args.config_file:
         config = load_config(args.config_file)
         sim = Sim.from_config(config)
-        try:
-            asyncio.run(sim.run())
-        except KeyboardInterrupt:
-            print("\nClosing gracefully...")
-            sys.exit(0)
+        asyncio.run(sim.run())
         

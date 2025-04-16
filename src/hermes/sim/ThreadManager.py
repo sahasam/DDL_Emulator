@@ -1,4 +1,6 @@
 import asyncio
+import signal
+import sys
 import time
 from typing import Dict
 
@@ -26,13 +28,34 @@ class ThreadManager:
     
     async def main_loop_forever(self):
         try:
+            # Wait for any task to complete (which won't happen normally)
             await asyncio.gather(*self._tasks)
         except asyncio.CancelledError:
-            pass
+            print("Tasks cancelled, shutting down...")
+        finally:
+            # Always clean up, even if exceptions occur
+            self.stop_all()
+            sys.exit(0)
+
+    def _setup_signal_handlers(self):
+        # Register signal handlers at the global level
+        def signal_handler(sig, frame):
+            print("\nShutdown signal received in global handler, cleaning up...")
+            self.stop_all()
+            sys.exit(0)
+        # Register the handler for SIGINT
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
 
     def stop_all(self):
+        # Close all ports' event loops from main thread
+        for name, port in self.ports.items():
+            if hasattr(port, '_loop') and port._loop.is_running():
+                port.stop_event.set()
+                port._loop.stop()
+    
         for thread in self._threads:
-            thread.join()
+            thread.join(timeout=0.5)
         
         for pipe in self._pipes:
             pipe.close()

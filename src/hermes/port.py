@@ -23,6 +23,7 @@ class ThreadedUDPPort(threading.Thread):
     def __init__(self, logger: logging.Logger, is_client: bool, addr: Tuple[str, int], name: str, **kwargs):
         super().__init__(**kwargs)
         self._loop = asyncio.new_event_loop()
+        self.stop_event = asyncio.Event()
         # Create a handler for the logger that works with asyncio
         self.logger = logging.getLogger("Port." + name)
 
@@ -39,13 +40,25 @@ class ThreadedUDPPort(threading.Thread):
                 .format("Client" if self.is_client else "Server", self.name, *self.addr)
 
     def run(self):
-        # Set up logging for this thread
         self.logger.info(f"Starting UDP port thread for {self.name}")
         asyncio.set_event_loop(self._loop)
-        # Ensure the loop has a handler for logging
+        
         try:
-            self._loop.create_task(self.run_link())
-            self._loop.run_forever()
+            # Create tasks explicitly
+            run_link_task = self._loop.create_task(self.run_link())
+            stop_event_task = self._loop.create_task(self.stop_event.wait())
+            
+            # Wait for either task to complete
+            done, pending = self._loop.run_until_complete(
+                asyncio.wait(
+                    [run_link_task, stop_event_task],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+            )
+            # Close any open transport
+            if self.protocol_instance and hasattr(self.protocol_instance, 'transport'):
+                self.protocol_instance.transport.close()
+                
         except Exception as e:
             self.logger.error(f"Error in port thread {self.name}: {e}")
         finally:
@@ -54,7 +67,7 @@ class ThreadedUDPPort(threading.Thread):
     
     async def run_link(self):
         self.logger.info(f"Running link for {self.name}")  # Changed from print to logger
-        while True:
+        while not self.stop_event.is_set():
             transport = None
             try:
                 self.logger.debug(f"Creating datagram endpoint for {self.name}")  # Added debug logging
@@ -138,7 +151,7 @@ class SymmetricPort(ThreadedUDPPort):
 
     
     async def run_link(self):
-        while True:
+        while not self.stop_event.is_set():
             neighbor_connected = False
 
             while not neighbor_connected:
