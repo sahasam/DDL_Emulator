@@ -8,7 +8,8 @@ from hermes.sim.PipeQueue import PipeQueue
 class PortConfig:
     logger: logging.Logger
     interface: str
-    name: str
+    port_id: str
+    name: str # deprecated
 
 @dataclass
 class PortIO:

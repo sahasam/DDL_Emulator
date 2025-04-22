@@ -5,16 +5,13 @@ config:
     websocket_server: info
     alice: info
     charlie: info
+  node_id: sahas
 ports:
-  - name: alice
-    port_implementation: symmetric
+  - name: en2
     interface: en2
-    type: something
-  - name: bob
+  - name: en3
     port_implementation: symmetric
     interface: en3
-    type: something
-  - name: charlie
+  - name: en4
     port_implementation: symmetric
     interface: en4
-    type: something

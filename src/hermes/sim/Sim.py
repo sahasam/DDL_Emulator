@@ -8,13 +8,18 @@ create all threads, event loops, and logs for simulation
 """
 import asyncio
 from collections import defaultdict
-from hermes.port import PortConfig, PortIO, SymmetricPort
+import logging
+import logging.config
+import uuid
+
+from hermes.faults.FaultInjector import ThreadSafeFaultInjector
+from hermes.model.ports import PortConfig, PortIO
+from hermes.port.Agent import Agent
+from hermes.port.Port import UDPPort
+from hermes.port.Protocol import EthernetProtocol
 from hermes.sim.WebSocketServer import WebSocketServer
 from hermes.sim.PipeQueue import PipeQueue
 from hermes.sim.ThreadManager import ThreadManager
-
-import logging
-import logging.config
 
 
 class Sim:
@@ -26,7 +31,8 @@ class Sim:
 
         self.log_dir = log_dir # Directory where log files will be stored
         self.log_level = defaultdict(lambda: logging.INFO) # Default logging levels for different components
-        
+        self.node_id = uuid.uuid4()
+
 
     @classmethod
     def from_config(cls, config):
@@ -38,8 +44,12 @@ class Sim:
         config_settings = config.get('config', {})
         sim.log_dir = config_settings.get('log_dir', '/opt/hermes/logs')
         sim.protocol = config_settings.get('protocol', 'liveness')
+        if 'node_id' in config_settings:
+            sim.node_id = config_settings['node_id']
         
         sim.thread_manager.add_websocket_server(WebSocketServer())
+        sim.thread_manager.add_agent(Agent(sim.node_id, sim.thread_manager))
+
 
         for port_config in config['ports']:
             if port_config.get('type', '') == 'disconnected':
@@ -82,17 +92,12 @@ class Sim:
             },
 
             'loggers': {
-                'Port.alice': {
+                'Port': {
                     'level': 'INFO',
                     'handlers': ['console', 'port_log'],
                     'propagate': False,
                 },
-                'Port.bob': {
-                    'level': 'INFO',
-                    'handlers': ['console', 'port_log'],
-                    'propagate': False,
-                },
-                'Port.charlie': {
+                'Protocol': {
                     'level': 'INFO',
                     'handlers': ['console', 'port_log'],
                     'propagate': False,
@@ -100,6 +105,11 @@ class Sim:
                 'WebSocketServer': {
                     'level': 'INFO',
                     'handlers': ['websocket_log'],
+                    'propagate': False,
+                },
+                'Agent': {
+                    'level': 'INFO',
+                    'handlers': ['console'],
                     'propagate': False,
                 },
             },
@@ -115,19 +125,23 @@ class Sim:
         read_q = PipeQueue()
         write_q = PipeQueue()
         signal_q = PipeQueue()
+        faultInjector = ThreadSafeFaultInjector()
         self.thread_manager.register_pipes([read_q, write_q, signal_q])
         self.thread_manager.register_port(
-            SymmetricPort(
+            UDPPort(
                 config=PortConfig(
                     logger=None,
                     interface=port_config['interface'],
+                    port_id=f"{self.node_id}:{port_config['name']}",
                     name=port_config['name']
                 ),
                 io=PortIO(
                     read_q=read_q,
                     write_q=write_q, 
                     signal_q=signal_q
-                )
+                ),
+                faultInjector=faultInjector,
+                protocolClass=EthernetProtocol
             )
         )
 

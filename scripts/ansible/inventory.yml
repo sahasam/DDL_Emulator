@@ -6,14 +6,6 @@ all:
       ansible_user: sahas
       node_name: NODE_A
     target1:
-      ansible_host: 192.168.55.145
+      ansible_host: 10.0.1.25
       ansible_user: daedaelus
       node_name: NODE_B
-    target2:
-      ansible_host: 192.168.55.155
-      ansible_user: daedaelus
-      node_name: NODE_C
-    target3:
-      ansible_host: 192.168.55.149
-      ansible_user: daedaelus
-      node_name: NODE_D

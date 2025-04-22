@@ -1,5 +1,7 @@
 import asyncio
-from typing import Optional, List
+from typing import Optional, List, Tuple
+
+from hermes.model.types import IPV6_ADDR
 
 async def run_subprocess(command: list, timeout: int = 10) -> str:
     """Runs a subprocess command asynchronously with a timeout."""
@@ -143,3 +145,26 @@ if __name__ == "__main__":
 
         # Add a sleep here to avoid tight looping and unnecessary CPU usage
         asyncio.run(asyncio.sleep(1))  # Wait for 2 seconds before retrying (you can adjust the time)
+
+def extract_running_details(self, result) -> Tuple[bool, Optional[IPV6_ADDR], Optional[IPV6_ADDR]]:
+    is_client = False
+    remote_addr = None
+    local_addr = None
+    
+    # Loop through the result to extract relevant details
+    for ipv6_address, address_type, role in result:
+        if address_type == 'local':
+            if role == 'client':
+                # If local address is a client, set is_client to True
+                is_client = True
+                # Find the server address (role == 'server') and set remote_addr
+                for server_ipv6, server_type, server_role in result:
+                    if server_role == 'server' and server_type == 'neighbor':
+                        remote_addr = (server_ipv6 + f"%{self.config.interface}", 55555)  # Use server address for remote
+                        break
+            elif role == 'server':
+                # If local address is a server, set local_addr
+                local_addr = (ipv6_address + f"%{self.config.interface}", 55555)
+    
+    # Return the tuple with the flags and addresses
+    return is_client, remote_addr, local_addr
