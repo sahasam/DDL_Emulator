@@ -25,7 +25,7 @@ class WebSocketServer:
         self.port = port
         self.max_connections = max_connections
         self.active_connections = set()
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger('WebSocketServer')
         self.command_queue = command_queue or queue.Queue()
         self.loop = None # Event loop for the server
     
@@ -69,19 +69,32 @@ class WebSocketServer:
                     pass  # Connection might have already been removed
 
     async def start_server(self):
-        async with serve(self.handle_client, self.host, self.port):
-            print(f"WebSocket server listening on {self.host}:{self.port}")
-            await asyncio.Future() 
+        self.logger.info(f"Starting WebSocket server on {self.host}:{self.port}")
+        
+        try:
+            # Don't use a context manager - directly create the server
+            self.server = await serve(
+                self.handle_client, 
+                self.host, 
+                self.port,
+                ping_interval=None,  # Disable ping to simplify
+                ping_timeout=None    # Disable ping timeout
+            )
+            
+            self.logger.info(f"WebSocket server listening on {self.host}:{self.port}")
+            
+            # Keep server running indefinitely
+            await asyncio.Future()
+        except Exception as e:
+            self.logger.error(f"WebSocket server error: {e}")
+
     
-    async def send_updates(self, snapshots, tree: tuple):
+    async def send_updates(self, snapshots, trees_dict: dict):
         """Send updates to all connected clients"""
         message = json.dumps({
             "type": "update",
             "snapshots": snapshots,
-            "tree": {
-                "nodes": tree[0],
-                "edges": tree[1]
-            }
+            "trees_dict": trees_dict
         })
         dead_connections = set()
 
@@ -101,6 +114,7 @@ class WebSocketServer:
                 self.active_connections.remove(dead_connection)
             except KeyError:
                 pass
+
 
 if __name__ == "__main__":
     import signal

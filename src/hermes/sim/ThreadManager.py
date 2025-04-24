@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import signal
 import sys
 import threading
@@ -17,6 +18,8 @@ class ThreadManager:
         self._ports_lock = threading.Lock()
         self._tasks = []
         self._pipes = []
+        self.agent = None
+        self.logger = logging.getLogger('ThreadManager')
 
         self._port_subscribers = []
         self.websocket_server = None
@@ -28,17 +31,38 @@ class ThreadManager:
         for thread in self._threads:
             time.sleep(0.1)
             thread.start()
-    
+        
     async def main_loop_forever(self):
         try:
-            # Wait for any task to complete (which won't happen normally)
-            await asyncio.gather(*self._tasks)
+            # Print task status
+            self.logger.info(f"main_loop_forever: Have {len(self._tasks)} tasks to run")
+            
+            # Create real tasks from the coroutines if needed
+            active_tasks = []
+            for i, task in enumerate(self._tasks):
+                if asyncio.iscoroutine(task):
+                    self.logger.info(f"Converting coroutine #{i} to task")
+                    task_obj = asyncio.create_task(task)
+                    active_tasks.append(task_obj)
+                else:
+                    self.logger.info(f"Task #{i} is already a task object")
+                    active_tasks.append(task)
+            
+            if not active_tasks:
+                self.logger.info("No tasks to run, waiting indefinitely")
+                await asyncio.Future()
+            else:
+                self.logger.info(f"Running {len(active_tasks)} active tasks")
+                # This should keep tasks running until they complete or are cancelled
+                await asyncio.gather(*active_tasks)
         except asyncio.CancelledError:
-            print("Tasks cancelled, shutting down...")
+            self.logger.info("Tasks cancelled, shutting down...")
+        except Exception as e:
+            self.logger.info(f"Error in main loop: {e}")
+            raise
         finally:
-            # Always clean up, even if exceptions occur
+            self.logger.info("Cleaning up in main_loop_forever")
             self.stop_all()
-            sys.exit(0)
 
     def _setup_signal_handlers(self):
         # Register signal handlers at the global level
@@ -80,10 +104,18 @@ class ThreadManager:
     
     def add_websocket_server(self, websocket_server: WebSocketServer) -> None:
         self.websocket_server = websocket_server
+        self.logger.info(f"Adding WebSocket server on {websocket_server.host}:{websocket_server.port}")
+        
+        # Store coroutines instead of trying to create tasks
+        # The tasks will be created in main_loop_forever when the event loop is running
         self._tasks.append(self.websocket_server.start_server())
         self._tasks.append(periodic_status_update(self))
         self._tasks.append(process_commands(self, self.websocket_server.command_queue))
     
     def add_agent(self, agent: threading.Thread) -> None:
+        self.agent = agent
         self._threads.append(agent)
+
+    def get_agent(self) -> threading.Thread:
+        return self.agent
 

@@ -104,10 +104,15 @@ class Sim:
                 },
                 'WebSocketServer': {
                     'level': 'INFO',
-                    'handlers': ['websocket_log'],
+                    'handlers': ['console', 'websocket_log'],
                     'propagate': False,
                 },
                 'Agent': {
+                    'level': 'INFO',
+                    'handlers': ['console'],
+                    'propagate': False,
+                },
+                'ThreadManager': {
                     'level': 'INFO',
                     'handlers': ['console'],
                     'propagate': False,
@@ -147,7 +152,6 @@ class Sim:
 
 
     async def run(self):
-        asyncio.get_event_loop().set_debug(True)
         self.thread_manager.start_all()
         self.thread_manager._setup_signal_handlers()
         await self.thread_manager.main_loop_forever()

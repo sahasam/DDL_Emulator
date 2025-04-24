@@ -107,6 +107,7 @@ class UDPPort(BasePort):
         # Pass **kwargs to the parent class constructor
         super().__init__(config, io, faultInjector, **kwargs)
         self.port_id = config.port_id
+        self.name = config.name
         self.protocolClass = protocolClass or EthernetProtocol
     
     async def wait_for_connection(self) -> Tuple[bool, Optional[IPV6_ADDR], Optional[IPV6_ADDR]]:
@@ -187,12 +188,10 @@ class UDPPort(BasePort):
         return is_client, remote_addr, local_addr
 
     def get_snapshot(self):
-        if self.remote_addr == None and self.local_addr == None:
+        if self.protocol_instance is None:
             return {
                 "name": self.port_id,
-                "ip": "disconnected",
-                "port": "disconnected",
-                "type": "client" if self.is_client else "server",
+                "connection": {},
                 "link": {
                     "protocol": "EthernetProtocol",
                     "status": "disconnected",
@@ -201,8 +200,15 @@ class UDPPort(BasePort):
 
         return {
             "name": self.port_id,
-            "ip": self.remote_addr[0] if self.is_client else self.local_addr[0],
-            "port": self.remote_addr[1] if self.is_client else self.local_addr[1],
-            "type": "client" if self.is_client else "server",
+            "connection": {
+                "local": {
+                    "address": str(self.local_addr),
+                    "is_client": self.is_client,
+                },
+                "remote": {
+                    "address": str(self.remote_addr),
+                    "is_client": not self.is_client,
+                },
+            },
             "link": self.protocol_instance.get_link_status()
         }
