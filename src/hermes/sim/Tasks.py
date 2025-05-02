@@ -15,8 +15,9 @@ async def periodic_status_update(thread_manager, period:float = 0.1) -> None:
                 port_status[port.name] = port.get_snapshot()
             
             agent = thread_manager.get_agent()
+            agent_snapshot = agent.get_snapshot()
             
-            await thread_manager.get_websocket_server().send_updates(port_status, agent.trees)
+            await thread_manager.get_websocket_server().send_updates(port_status, agent_snapshot)
     except asyncio.CancelledError:
         thread_manager.logger.info("Periodic status update task cancelled")
     except Exception as e:

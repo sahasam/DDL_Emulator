@@ -25,6 +25,7 @@ class EthernetProtocol(asyncio.DatagramProtocol):
 
         self.logger = logging.getLogger(f"Protocol.{name}")
         self.logger.info(f"Protocol {name} initialized")
+        self.name = name
         self.faultInjector = faultInjector
         self.io = io
         self.link_state = self.LinkState.DISCONNECTED
@@ -36,6 +37,7 @@ class EthernetProtocol(asyncio.DatagramProtocol):
         self._timeout_task: Optional[asyncio.Task] = None
         self._send_heartbeat_task: Optional[asyncio.Task] = None
         self._last_received: float = 0.0
+        self.neighbor_portid: Optional[str] = None
 
         self.disconnected_future = asyncio.Future()
         self._packet_handler = self._handle_handshake if is_client else self._handle_server_handshake
@@ -112,14 +114,14 @@ class EthernetProtocol(asyncio.DatagramProtocol):
         self._last_received = asyncio.get_event_loop().time()
         
         if data == b"HEARTBEAT":
-            self.logger.info(f"Received heartbeat from {addr} {asyncio.get_event_loop().time()}")
             return
         
         self._packet_handler(data, addr)
     
     def _handle_handshake(self, data, addr):
         """Handle packets during client handshake phase"""
-        if data == b"YESIAM":
+        if data.startswith(b"YESIAM "):
+            self.neighbor_portid = data.split(b" ")[1].decode('utf-8')
             self.link_state = self.LinkState.CONNECTED
             self._ping_alive_task.cancel()
             # Switch to normal packet handling
@@ -133,10 +135,11 @@ class EthernetProtocol(asyncio.DatagramProtocol):
 
     def _handle_server_handshake(self, data, addr):
         """Handle packets during server handshake phase"""
-        if data == b"AREYOUTHERE":
+        if data.startswith(b"AREYOUTHERE "):
+            self.neighbor_portid = data.split(b" ")[1].decode('utf-8')
             self.link_state = self.LinkState.CONNECTED
             self.sending_addr = addr
-            self.transport.sendto(b"YESIAM", addr)
+            self.transport.sendto(b"YESIAM " + self.name.encode('utf-8'), addr)
             # Switch to normal packet handling
             self._packet_handler = self._handle_normal_packet
             # Start send task
@@ -161,7 +164,7 @@ class EthernetProtocol(asyncio.DatagramProtocol):
                     self.logger.info("ping alive timeout")
                     self.transport.close()
                     return
-                self.transport.sendto(b"AREYOUTHERE")
+                self.transport.sendto(b"AREYOUTHERE " + self.name.encode('utf-8'))
         except asyncio.CancelledError:
             self.logger.info("Ping alive task cancelled")
         except Exception as e:
@@ -199,5 +202,4 @@ class EthernetProtocol(asyncio.DatagramProtocol):
         return {
             "protocol": "EthernetProtocol",
             "status": self.link_state.value,
-            "statistics": {}
         }

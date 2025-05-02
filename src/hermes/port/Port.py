@@ -36,6 +36,8 @@ class BasePort(threading.Thread):
         self.config = config
         self.io = io
 
+        self.tree_instance_id: Optional[str] = None
+
         self.protocol_instance = None
         self.daemon = True
 
@@ -150,7 +152,7 @@ class UDPPort(BasePort):
                     await self.protocol_instance.disconnected_future
                 except Exception as e:
                     self.logger.error(f"Error in run_link for {self.port_id}: {str(e)}", esc_info=True)
-                    self.logger.info(f"{self.port_id} -- Transport closed")
+                    raise e
                 finally:
                     self.logger.info(f"{self.port_id} -- Transport closed")
                     if transport:
@@ -191,7 +193,6 @@ class UDPPort(BasePort):
         if self.protocol_instance is None:
             return {
                 "name": self.port_id,
-                "connection": {},
                 "link": {
                     "protocol": "EthernetProtocol",
                     "status": "disconnected",
@@ -201,14 +202,13 @@ class UDPPort(BasePort):
         return {
             "name": self.port_id,
             "connection": {
-                "local": {
-                    "address": str(self.local_addr),
-                    "is_client": self.is_client,
-                },
-                "remote": {
-                    "address": str(self.remote_addr),
-                    "is_client": not self.is_client,
-                },
+                "local_address": str(self.local_addr),
+                "neighbor_address": str(self.remote_addr),
+                "neighbor_portid": self.protocol_instance.neighbor_portid,
+                "is_client": self.is_client,
             },
-            "link": self.protocol_instance.get_link_status()
+            "link": {
+                "protocol": "EthernetProtocol",
+                "status": self.protocol_instance.link_state.value,
+            }
         }

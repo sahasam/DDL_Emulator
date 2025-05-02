@@ -6,9 +6,8 @@ def test_tree_build_serialization():
     # Create a test message
     tb = TreeBuild(
         tree_id="test_tree",
-        sending_node_id="node1",
+        tree_instance_id="test_instance",
         hops=3,
-        path=["node1:port1", "node2:port2"]
     )
     
     # Convert to bytes
@@ -19,24 +18,9 @@ def test_tree_build_serialization():
     
     # Verify all fields match
     assert tb_decoded.tree_id == "test_tree"
-    assert tb_decoded.sending_node_id == "node1" 
+    assert tb_decoded.tree_instance_id == "test_instance"
     assert tb_decoded.hops == 3
-    assert tb_decoded.path == ["node1:port1", "node2:port2"]
 
-def test_tree_build_empty_path():
-    """Test TreeBuild serialization with empty path"""
-    tb = TreeBuild(
-        tree_id="test_tree",
-        sending_node_id="node1",
-        hops=0,
-        path=[]
-    )
-    
-    data = tb.to_bytes()
-    tb_decoded = TreeBuild.from_bytes(data)
-    
-    assert tb_decoded.path == []
-    assert tb_decoded.hops == 0
 
 def test_tree_build_invalid_format():
     """Test that invalid TreeBuild messages raise ValueError"""
@@ -50,6 +34,7 @@ def test_tree_build_ack_serialization():
     # Create test message
     tba = TreeBuildAck(
         tree_id="test_tree",
+        tree_instance_id="test_instance",
         hops=2,
         path=["node1:port1", "node2:port2"]
     )
@@ -62,13 +47,15 @@ def test_tree_build_ack_serialization():
     
     # Verify fields match
     assert tba_decoded.tree_id == "test_tree"
+    assert tba_decoded.tree_instance_id == "test_instance"
     assert tba_decoded.hops == 2
     assert tba_decoded.path == ["node1:port1", "node2:port2"]
 
 def test_tree_build_ack_empty_path():
     """Test TreeBuildAck serialization with empty path"""
     tba = TreeBuildAck(
-        tree_id="test_tree", 
+        tree_id="test_tree",
+        tree_instance_id="test_instance",
         hops=0,
         path=[]
     )
@@ -76,6 +63,8 @@ def test_tree_build_ack_empty_path():
     data = tba.to_bytes()
     tba_decoded = TreeBuildAck.from_bytes(data)
     
+    assert tba_decoded.tree_id == "test_tree"
+    assert tba_decoded.tree_instance_id == "test_instance"
     assert tba_decoded.path == []
     assert tba_decoded.hops == 0
 

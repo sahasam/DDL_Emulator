@@ -1,5 +1,4 @@
 import asyncio
-import sys
 from hermes.sim.Sim import Sim
 
 import argparse

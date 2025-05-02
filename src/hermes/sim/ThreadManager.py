@@ -41,11 +41,9 @@ class ThreadManager:
             active_tasks = []
             for i, task in enumerate(self._tasks):
                 if asyncio.iscoroutine(task):
-                    self.logger.info(f"Converting coroutine #{i} to task")
                     task_obj = asyncio.create_task(task)
                     active_tasks.append(task_obj)
                 else:
-                    self.logger.info(f"Task #{i} is already a task object")
                     active_tasks.append(task)
             
             if not active_tasks:

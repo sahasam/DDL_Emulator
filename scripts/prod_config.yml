@@ -10,8 +10,6 @@ ports:
   - name: en2
     interface: en2
   - name: en3
-    port_implementation: symmetric
     interface: en3
   - name: en4
-    port_implementation: symmetric
     interface: en4

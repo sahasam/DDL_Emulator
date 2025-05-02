@@ -67,6 +67,8 @@ async def get_ipv6_neighbors(interface: str) -> Optional[List[str]]:
     
     if len(local_addresses) > 2:
         raise Exception(f"More than two IPv6 addresses found on interface {interface}.")
+    if len(local_addresses) == 0:
+        return None
     
     # Step 2: Ping the link-local all nodes address to trigger neighbor discovery
     broadcast_address = 'ff02::1'  # Link-local all nodes address
@@ -88,44 +90,42 @@ async def get_ipv6_neighbors(interface: str) -> Optional[List[str]]:
         if 'fe80::' in line:  # Only look for link-local addresses
             parts = line.split()
             ipv6_address = parts[0]
-            # Normalize the neighbor address by stripping the interface identifier
-            ipv6_address_normalized = ipv6_address.split('%')[0]
+
+            # Skip non-REACHABLE, non-PERMANENT entries
+            valid_states = ['REACHABLE','PERMANENT']
+            if not any(state in line for state in valid_states):
+                print(f"Skipping neighbor {ipv6_address} - not in valid state")
+                continue
             
-            if ipv6_address_normalized not in local_addresses:
+            if ipv6_address not in local_addresses:
                 neighbors.append((ipv6_address, 'neighbor'))
             else:
                 neighbors.append((ipv6_address, 'local'))
-
-    # Avoid duplicating local addresses
-    for local_address in local_addresses:
-        if local_address not in [item[0] for item in neighbors]:
-            neighbors.append((local_address, 'local'))
-
-    # Sort all addresses lexicographically and assign client/server based on order
-    all_addresses = [item[0] for item in neighbors]
-    all_addresses.sort()
-
-    # Create a dict for easy lookup
-    address_types = {item[0]: item[1] for item in neighbors}
     
-    # Add 'client' or 'server' based on lexicographical order
+    # Determine client/server roles based on address comparison
     sorted_neighbors = []
-    if len(all_addresses) != 2:
+    if len(neighbors) != 2:
         return None
     
-    for address in all_addresses:
-        address_type = address_types[address]
-        # Compare against the other address to determine client/server
-        other_address = all_addresses[1] if address == all_addresses[0] else all_addresses[0]
-        role = "client" if address < other_address else "server"
-        sorted_neighbors.append((address, address_type, role))
+    if neighbors[0][1] == neighbors[1][1]:
+        print(f"Error: Both neighbors are {neighbors[0][1]}")
+        print(f"Neighbors: {neighbors}")
+        print(f"Local addresses: {local_addresses}")
+        print(f"ip -6 neighbor show dev {interface}  -- Output: {output}")
+        return None
+        
+    addr1, type1 = neighbors[0]
+    addr2, type2 = neighbors[1]
+    
+    sorted_neighbors.append((addr1, type1, "client" if addr1 < addr2 else "server"))
+    sorted_neighbors.append((addr2, type2, "client" if addr2 < addr1 else "server"))
 
     return sorted_neighbors if sorted_neighbors else None
     
 
 if __name__ == "__main__":
     # Specify the interface to query (e.g., 'eth0', 'en0', etc.)
-    interface = 'en3'  # Replace with your interface name (e.g., 'eth0', 'en0', etc.)
+    interface = 'en4'  # Replace with your interface name (e.g., 'eth0', 'en0', etc.)
     
     while True:
         try:
@@ -146,25 +146,3 @@ if __name__ == "__main__":
         # Add a sleep here to avoid tight looping and unnecessary CPU usage
         asyncio.run(asyncio.sleep(1))  # Wait for 2 seconds before retrying (you can adjust the time)
 
-def extract_running_details(self, result) -> Tuple[bool, Optional[IPV6_ADDR], Optional[IPV6_ADDR]]:
-    is_client = False
-    remote_addr = None
-    local_addr = None
-    
-    # Loop through the result to extract relevant details
-    for ipv6_address, address_type, role in result:
-        if address_type == 'local':
-            if role == 'client':
-                # If local address is a client, set is_client to True
-                is_client = True
-                # Find the server address (role == 'server') and set remote_addr
-                for server_ipv6, server_type, server_role in result:
-                    if server_role == 'server' and server_type == 'neighbor':
-                        remote_addr = (server_ipv6 + f"%{self.config.interface}", 55555)  # Use server address for remote
-                        break
-            elif role == 'server':
-                # If local address is a server, set local_addr
-                local_addr = (ipv6_address + f"%{self.config.interface}", 55555)
-    
-    # Return the tuple with the flags and addresses
-    return is_client, remote_addr, local_addr

@@ -6,12 +6,20 @@ Implements a JSON messaging protocol for client requests and server state update
 """
 
 import asyncio
+from dataclasses import asdict, is_dataclass
+import json
 import threading
 from websockets.asyncio.server import serve
 import json
 import logging
 import queue
 import websockets
+
+class DataclassJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if is_dataclass(obj):
+            return asdict(obj)
+        return super().default(obj)
 
 class WebSocketServer:
     def __init__(
@@ -89,16 +97,18 @@ class WebSocketServer:
             self.logger.error(f"WebSocket server error: {e}")
 
     
-    async def send_updates(self, snapshots, trees_dict: dict):
+    async def send_updates(self, snapshots, agent_snapshot):
         """Send updates to all connected clients"""
         message = json.dumps({
             "type": "update",
+            "node_id": agent_snapshot['node_id'],
             "snapshots": snapshots,
-            "trees_dict": trees_dict
-        })
+            "trees_dict": agent_snapshot['trees'],
+            'port_paths': agent_snapshot['port_paths']
+        }, cls=DataclassJSONEncoder)
         dead_connections = set()
 
-        for client_id, connection in self.active_connections:
+        for client_id, connection in self.active_connections.copy():
             try:
                 await connection.send(message)
             except websockets.exceptions.ConnectionClosed:
@@ -114,6 +124,7 @@ class WebSocketServer:
                 self.active_connections.remove(dead_connection)
             except KeyError:
                 pass
+
 
 
 if __name__ == "__main__":
