@@ -5,9 +5,10 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # SSH connection details
 # Remote host configurations - using simple arrays instead of associative array
+# ex: "daedaelus@10.0.1.34:/opt/hermes/src"
 REMOTE_HOSTS=(
   "daedaelus@10.0.1.25:/opt/hermes/src"
-  "daedaelus@10.0.1.28:/opt/hermes/src"
+#  "daedaelus@10.0.1.34:/opt/hermes/src"
 )
 LOCAL_DIR="$SCRIPT_DIR/../src"
 

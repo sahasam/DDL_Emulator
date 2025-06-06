@@ -1,12 +1,12 @@
 import asyncio
 from enum import Enum
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
 from hermes.faults.FaultInjector import ThreadSafeFaultInjector
 from hermes.model.ports import PortIO
 from hermes.model.types import IPV6_ADDR
-
+    
 
 class EthernetProtocol(asyncio.DatagramProtocol):
     class LinkState(Enum):
@@ -95,21 +95,6 @@ class EthernetProtocol(asyncio.DatagramProtocol):
         except Exception as e:
             self.logger.error(f"Error in _heartbeat_timeout: {str(e)}", exc_info=True)
                 
-
-    def connection_lost(self, exc):
-        self.logger.info("Connection lost")
-        self.link_state = self.LinkState.DISCONNECTED
-        self.disconnected_future.set_result(None)
-        if self._ping_alive_task:
-            self._ping_alive_task.cancel()
-        if self._send_task:
-            self._send_task.cancel()
-        if self._timeout_task:
-            self._timeout_task.cancel()
-        if self._send_heartbeat_task:
-            self._send_heartbeat_task.cancel()
-        self.io.signal_q.put(b"DISCONNECTED")
-
     def datagram_received(self, data, addr):
         self._last_received = asyncio.get_event_loop().time()
         
@@ -164,6 +149,7 @@ class EthernetProtocol(asyncio.DatagramProtocol):
                     self.logger.info("ping alive timeout")
                     self.transport.close()
                     return
+                self.logger.info(f"Ping alive -- sending AREYOUTHERE")
                 self.transport.sendto(b"AREYOUTHERE " + self.name.encode('utf-8'))
         except asyncio.CancelledError:
             self.logger.info("Ping alive task cancelled")

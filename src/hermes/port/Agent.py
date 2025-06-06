@@ -1,4 +1,3 @@
-from collections import defaultdict
 from dataclasses import dataclass, field
 import logging
 import threading
@@ -8,7 +7,7 @@ import uuid
 
 from hermes.model.messages import RTPPacket, TreeBuild, TreeBuildAck, TreeBuildInvalidation
 from hermes.model.trees import PathTree
-from hermes.port.Protocol import EthernetProtocol
+from hermes.port.protocol import LinkProtocol
 from hermes.sim.ThreadManager import ThreadManager
 
 
@@ -60,7 +59,7 @@ class Agent(threading.Thread):
 
     def _broadcast_tree_build(self, exclude_portid: str, tb_packet: TreeBuild):
         for portid, port in self.thread_manager.get_ports().items():
-            if portid != exclude_portid and port.protocol_instance and port.protocol_instance.link_state == EthernetProtocol.LinkState.CONNECTED:
+            if portid != exclude_portid and port.protocol_instance and port.protocol_instance.link_state == LinkProtocol.LinkState.CONNECTED:
                 port.io.write_q.put(tb_packet.to_bytes())
 
     def run(self):

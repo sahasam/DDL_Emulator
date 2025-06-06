@@ -12,7 +12,7 @@ from typing import Optional, Tuple, Type
 from hermes.faults.FaultInjector import ThreadSafeFaultInjector
 from hermes.model.ports import PortConfig, PortIO
 from hermes.model.types import IPV6_ADDR
-from hermes.port.Protocol import EthernetProtocol
+from hermes.port.protocol import LinkProtocol, EthernetProtocolExtended
 
 import logging
 import threading
@@ -104,22 +104,48 @@ class UDPPort(BasePort):
                  config: PortConfig,
                  io: PortIO,
                  faultInjector: Optional[ThreadSafeFaultInjector]=None,
-                 protocolClass: Optional[Type[EthernetProtocol]]=None,
+                 protocolClass: Optional[Type[LinkProtocol]]=None,
                  **kwargs):
         # Pass **kwargs to the parent class constructor
         super().__init__(config, io, faultInjector, **kwargs)
         self.port_id = config.port_id
         self.name = config.name
-        self.protocolClass = protocolClass or EthernetProtocol
+        self.protocolClass = protocolClass or EthernetProtocolExtended
+        # Check if interface is a virtual address (e.g. "127.0.0.1:45454" or "127.0.0.1:45454:45455")
+        self.is_virtual = ":" in self.config.interface
+        if self.is_virtual:
+            parts = self.config.interface.split(":")
+            if len(parts) == 3:
+                # If two ports are specified, use them as local and remote ports
+                self.local_port = int(parts[1])
+                self.remote_port = int(parts[2])
+            else:
+                raise ValueError("Virtual interface must be in format 'host:local_port:remote_port'")
+            self.host = parts[0]
     
     async def wait_for_connection(self) -> Tuple[bool, Optional[IPV6_ADDR], Optional[IPV6_ADDR]]:
         try:
             while True:
-                result = await get_ipv6_neighbors(self.config.interface)
-                if result:
-                    self.is_client, self.remote_addr, self.local_addr = self.extract_running_details(result)
-                    self.logger.info(f"Found Neighbor. result={result}")
+                if self.is_virtual:
+                    # For virtual connections, use the configured ports
+                    local_addr = (self.host, self.local_port)
+                    remote_addr = (self.host, self.remote_port)
+                    
+                    # The port with the lower port number is the server
+                    self.is_client = self.local_port > self.remote_port
+                    
+                    self.remote_addr = remote_addr
+                    self.local_addr = local_addr
+                    self.logger.info(f"Virtual connection setup - local: {local_addr}, remote: {remote_addr}, is_client: {self.is_client}")
                     return (self.is_client, self.remote_addr, self.local_addr)
+                else:
+                    # For real ethernet interfaces, use IPv6 neighbor discovery
+                    result = await get_ipv6_neighbors(self.config.interface)
+                    if result:
+                        self.is_client, self.remote_addr, self.local_addr = self.extract_running_details(result)
+                        self.logger.info(f"Found Neighbor. result={result}")
+                        return (self.is_client, self.remote_addr, self.local_addr)
+                await asyncio.sleep(1)  # Add delay between retries
         except asyncio.CancelledError:
             self.logger.info(f"Wait for connection cancelled for {self.port_id}")
             return
@@ -136,6 +162,7 @@ class UDPPort(BasePort):
 
                 transport = None
                 try:
+                    self.logger.info(f"{self.port_id} -- Creating datagram endpoint with local_addr={local_addr}, remote_addr={remote_addr if is_client else None}")
                     transport, self.protocol_instance = await self._loop.create_datagram_endpoint(
                         lambda: self.protocolClass(
                             io=self.io,
@@ -148,11 +175,21 @@ class UDPPort(BasePort):
                         local_addr=local_addr,  
                         reuse_port=True
                     )
-                    self.logger.info(f"{self.port_id} -- Transport opened")
+                    self.logger.info(f"{self.port_id} -- Transport opened successfully")
+                    
+                    if not self.protocol_instance:
+                        raise Exception("Protocol instance not created")
+                        
+                    self.logger.info(f"{self.port_id} -- Waiting for disconnected future")
                     await self.protocol_instance.disconnected_future
+                    self.logger.info(f"{self.port_id} -- Disconnected future completed")
                 except Exception as e:
-                    self.logger.error(f"Error in run_link for {self.port_id}: {str(e)}", esc_info=True)
-                    raise e
+                    self.logger.error(f"Error in run_link for {self.port_id}: {str(e)}", exc_info=True)
+                    if transport:
+                        transport.close()
+                    self.protocol_instance = None
+                    await asyncio.sleep(1)
+                    continue
                 finally:
                     self.logger.info(f"{self.port_id} -- Transport closed")
                     if transport:
@@ -163,7 +200,7 @@ class UDPPort(BasePort):
             self.logger.info(f"Run link cancelled for {self.port_id}")
             return
         except Exception as e:
-            self.logger.error(f"Error in run_link for {self.port_id}: {str(e)}", esc_info=True)
+            self.logger.error(f"Error in run_link for {self.port_id}: {str(e)}", exc_info=True)
             return
     
     def extract_running_details(self, result) -> Tuple[bool, IPV6_ADDR, IPV6_ADDR]:
