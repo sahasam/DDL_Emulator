@@ -25,7 +25,7 @@ class SliceStateMachine(Machine):
     The client starts in RD state, server starts in WT state to begin the cycle.
     """
     def __init__(self, is_client: bool):
-        states = ["RD", "RA", "WT", "L"]  # Read, Read Acknowledge, Write
+        states = ["RD", "RA", "WT", ]  # Read, Read Acknowledge, Write
         transitions = [
             # When data is read and sent, move to waiting for ACK
             {'trigger': 'read_complete', 'source': 'RD', 'dest': 'RA'},
@@ -158,10 +158,17 @@ class ChunkProtocol(LinkProtocol):
                         self.state_machine.read_complete()
                         self.logger.info("Sent data, transitioning to RA state")
                     else:
-                        self.transport.sendto(b"LIVENESS")
-                        self.state_machine.read_complete()
-                        self.logger.info("Sent LIVENESS, transitioning to L state")
-                await asyncio.sleep(0)
+                        # self.transport.sendto(b"LIVENESS")
+                        # self.state_machine.read_complete()
+                        # self.logger.info("Sent LIVENESS, transitioning to L state")
+                        if self.is_client:
+                            self.transport.sendto(b"LIVENESS")
+                        else:
+                            self.transport.sendto(b"LIVENESS", self.sending_addr)
+                        
+                        self.logger.info("Sent LIVENESS, staying in RD state")
+
+                    await asyncio.sleep(0.1)
         except asyncio.CancelledError:
             self.logger.info("Process send cancelled")
         except Exception as e:

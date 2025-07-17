@@ -9,6 +9,6 @@ config:
   node_id: sumanth
 ports:
   - name: en1
-    interface: en1
+    interface: "127.0.0.1:8001:8002"
   - name: en2
-    interface: en2
+    interface: "127.0.0.1:8003:8004"

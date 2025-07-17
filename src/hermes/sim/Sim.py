@@ -148,7 +148,7 @@ class Sim:
                     signal_q=signal_q
                 ),
                 faultInjector=faultInjector,
-                protocolClass=ChunkProtocol
+                protocolClass=EthernetProtocol
             )
         )
 
