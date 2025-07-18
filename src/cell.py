@@ -110,7 +110,29 @@ class Cell:
     
     def link_status(self, port_name):
         """Get status of a port"""
-        pass
+        try:
+            ports = self.sim.thread_manager.get_ports()
+
+            port_key = f"{self.cell_id}:{port_name}"
+            
+            if port_key not in ports:
+                return "unbound"
+            
+            port = ports[port_key]
+            
+            if not port.is_alive():
+                return "dead"
+            
+            if hasattr(port, 'protocol_instance') and port.protocol_instance:
+                if hasattr(port.protocol_instance, 'link_state'):
+                    return port.protocol_instance.link_state.value
+                
+            return "bound"
+        
+        except Exception as e:
+            return f'error: {str(e)}'
+                            
+            
         
     
     def heartbeat(self):
