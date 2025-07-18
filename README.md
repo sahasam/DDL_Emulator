@@ -4,6 +4,7 @@ Hermes is a network simulation framework for testing and developing network prot
 
 ## Usage
 
+### Single Simulation 
 To run a simulation, use the following command:
 
 ```bash
@@ -14,6 +15,16 @@ pip install -r requirements.txt
 
 # Run the simulation
 python3 src/main.py -c <path_to_config_file> -l <path_to_log_dir>
+```
+
+### Multi-Process Simulation
+To run multiple simulations simultaneously on one machine:
+```bash
+# Run multiple simulations at once
+python3 src/main.py -c <config_file1> <config_file2> [config_file3...]
+
+# Example: Run two network nodes
+python3 src/main.py -c scripts/prod_config.yml scripts/test_config.yml
 ```
 
 ## WebSocket Server

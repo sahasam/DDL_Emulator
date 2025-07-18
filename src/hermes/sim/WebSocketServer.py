@@ -81,6 +81,7 @@ class WebSocketServer:
         
         try:
             # Don't use a context manager - directly create the server
+        
             self.server = await serve(
                 self.handle_client, 
                 self.host, 

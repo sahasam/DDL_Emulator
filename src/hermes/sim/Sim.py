@@ -48,13 +48,14 @@ class Sim:
         if 'node_id' in config_settings:
             sim.node_id = config_settings['node_id']
         
-        sim.thread_manager.add_websocket_server(WebSocketServer())
+        sim.thread_manager.add_websocket_server(WebSocketServer(port=config_settings.get('web_socket_port', 6363)))
         sim.thread_manager.add_agent(Agent(sim.node_id, sim.thread_manager))
 
 
         for port_config in config['ports']:
             if port_config.get('type', '') == 'disconnected':
                 continue
+            
             # Create a port, with pipes and a thread. Add the port to the thread manager
             sim._create_port(port_config)
         
@@ -147,7 +148,7 @@ class Sim:
                     signal_q=signal_q
                 ),
                 faultInjector=faultInjector,
-                protocolClass=ChunkProtocol
+                protocolClass=EthernetProtocol
             )
         )
 
