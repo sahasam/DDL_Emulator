@@ -2,6 +2,8 @@ import socket
 import xmlrpc.client
 import subprocess
 import time
+import tempfile
+import os
 
 class ProtoDatacenter:
     def __init__(self):
@@ -9,27 +11,35 @@ class ProtoDatacenter:
         self.processes = {}
          
     def add_cell(self, cell_id, rpc_port):
-        """Connects to a cel"""
+        """Connects to a cell"""
         try:
             cell_script = "src/cell.py"
             cmd = ['python3', cell_script, "--cell-id", cell_id, "--rpc-port", str(rpc_port)]
             
-            print(f"Starting cell {cell_id} on port {rpc_port} with command: {' '.join(cmd)}")
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            log_file = f'cell_{cell_id}.log'
             
-            # if hasattr(self, 'processes'):
-            #     self.processes = {}
+            print(f"Starting cell {cell_id} on port {rpc_port} with command: {' '.join(cmd)}")
+            with open(log_file, 'w') as f:
+                process = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, text=True)
                 
-            self.processes[cell_id] = process
+            # Store both process and log file (don't overwrite!)
+            self.processes[cell_id] = {'process': process, 'log_file': log_file}
             
             time.sleep(3)
             
+            # Check if process died
             if process.poll() is not None:
-                stdout, stderr = process.communicate()
-                print(f"Cell output: {stdout.decode()}")
-                print(f"Cell error: {stderr.decode()}")
+                # Process died - read the log file instead
+                try:
+                    with open(log_file, 'r') as f:
+                        output = f.read()
+                    print(f"Cell process died. Log output:\n{output}")
+                    return False
+                except FileNotFoundError:
+                    print(f"Cell process died and no log file found")
+                    return False
             
-            
+            # Try to connect
             url = f'http://localhost:{rpc_port}'
             proxy = xmlrpc.client.ServerProxy(url)
             
@@ -44,24 +54,35 @@ class ProtoDatacenter:
         except Exception as e:
             print(f"Failed to connect to cell {cell_id} at port {rpc_port}: {e}")
             return False
-    
+
     def remove_cell(self, cell_id):
         """Remove and shutdown a cell"""
         if cell_id in self.cells:
             try:
-                self.cells[cell_id].shutown()
+                self.cells[cell_id].shutdown()  # Fixed typo
             except:
                 pass
             finally:
                 del self.cells[cell_id]
                 
-            if hasattr(self, 'processes') and cell_id in self.processes:
-                self.processes[cell_id].terminate()
-                self.processes[cell_id].wait()
-                del self.processes[cell_id]
+        if hasattr(self, 'processes') and cell_id in self.processes:
+            process_info = self.processes[cell_id]
+            process_info['process'].terminate()
+            process_info['process'].wait()
+            
+            # Clean up log file
+            try:
+                import os
+                os.remove(process_info['log_file'])
+                print(f"Removed log file: {process_info['log_file']}")
+            except FileNotFoundError:
+                pass
                 
-            print(f"Cell {cell_id} removed successfully.")
-                    
+            del self.processes[cell_id]
+            
+        print(f"Cell {cell_id} removed successfully.")
+        
+             
                     
                       
     def create_link(self, cell1_id, port1_name, cell2_id, port2_name, port1_addr, port2_addr):
@@ -134,24 +155,11 @@ class ProtoDatacenter:
         
         try:
             result = self.cells[cell_id].add_agent(agent_name)
-            print(f"Agent {agent_name} added to cell {cell_id}: {result}")
+            print(f"Agent {agent_name} added and started in cell {cell_id}: {result}")
         except Exception as e:
             print(f"Failed to add agent {agent_name} to cell {cell_id}: {e}")
             
-    def agent_start(self, cell_id, agent_name):
-        """Starts an agent to a cell"""
-        
-        if cell_id not in self.cells:
-            print(f"Cell {cell_id} is not connected.")
-            return
-        
-        try:
-            result = self.cells[cell_id].start_agent(agent_name)
-            print(f"Agent {agent_name} started in cell {cell_id}: {result}")
-            
-        except Exception as e:
-            print(f"Failed to start agent {agent_name} in cell {cell_id}: {e}")
-            
+   
     def agent_stop(self, cell_id, agent_name):
         """Stop agent for a cell"""
         if cell_id not in self.cells:
@@ -191,6 +199,36 @@ class ProtoDatacenter:
         except Exception as e:
             print(f"Failed to get status of agent {agent_name} in cell {cell_id}: {e}")
             
+
+    def get_logs(self, cell_id):
+        """Fetch logs from a cell"""
+        if hasattr(self, 'processes') and cell_id in self.processes:
+            
+            log_file = self.processes[cell_id]['log_file']
+            try:
+                with open(log_file, 'r') as f:
+                    lines = f.readlines()
+                    print(f"=== Last 20 Lines from {cell_id} ===")
+                    for line in lines[-20:]:
+                        print(line.strip())
+            except FileNotFoundError:
+                print(f"Log file for cell {cell_id} not found.")
+        else:
+            print(f'Cell {cell_id} not found or no logs available.')
+            
+        
+    def get_metrics(self, cell_id):
+        """Get metrics from a cell"""
+        if cell_id not in self.cells:
+            print(f"Cell {cell_id} is not connected.")
+            return
+        
+        try:
+            metrics = self.cells[cell_id].get_metrics()
+            print(f"Metrics for cell {cell_id}: {metrics}")
+        except Exception as e:
+            print(f"Failed to get metrics for cell {cell_id}: {e}")
+            
 def main():
     dc = ProtoDatacenter()
     
@@ -206,6 +244,9 @@ def main():
     print("  agent_stop <cell_id> <agent_name>")
     print("  agent_list <cell_id>")
     print("  agent_status <cell_id> <agent_name>")
+    print("  logs <cell_id>")
+    print("  get_metrics <cell_id>")
+    print("  cleanup")
     print("  quit")
     
     while True:
@@ -225,6 +266,31 @@ def main():
             elif cmd[0] == 'remove' and len(cmd) == 2:
                 cell_id = cmd[1]
                 dc.remove_cell(cell_id)
+                
+            elif cmd[0] == 'logs' and len(cmd) == 2:
+                cell_id = cmd[1]
+                dc.get_logs(cell_id)
+            elif cmd[0] == 'get_metrics' and len(cmd) == 2:
+                cell_id = cmd[1]
+                dc.get_metrics(cell_id)
+            elif cmd[0] == 'cleanup':
+                # Clean up all log files
+                if hasattr(dc, 'cell_processes'):
+                    for cell_id, info in dc.cell_processes.items():
+                        try:
+                            os.remove(info['log_file'])
+                            print(f"Removed {info['log_file']}")
+                        except FileNotFoundError:
+                            pass
+                
+                # Also clean up any orphaned log files
+                import glob
+                for log_file in glob.glob("cell_*.log"):
+                    try:
+                        os.remove(log_file)
+                        print(f"Removed orphaned {log_file}")
+                    except:
+                        pass
                 
             elif cmd[0] == 'link' and len(cmd) == 7:
                 cell1, port1, cell2, port2, addr1, addr2 = cmd[1:]
@@ -266,6 +332,13 @@ def main():
 
         except Exception as e:
             print(f"Error: {e}")
+            
+        finally:
+            for process in dc.processes.values():
+                if process['process'].poll() is None:
+                    process['process'].terminate()
+                    process['process'].wait()
+                    print(f"Terminated process for cell {process['log_file']}")
             
             
 if __name__ == "__main__":

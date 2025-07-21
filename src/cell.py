@@ -56,9 +56,11 @@ class Cell:
             self.rpc_server.register_function(self.stop_agent, "stop_agent")
             self.rpc_server.register_function(self.list_agents, "list_agents")
             self.rpc_server.register_function(self.agent_status, "agent_status")
+            self.rpc_server.register_function(self.get_metrics, "get_metrics")
             
             print(f"XML-RPC server started on port {self.rpc_port}")
             self.rpc_server.serve_forever()
+
         
         rpc_thread = threading.Thread(target=run_server, daemon=True)
         rpc_thread.start()   
@@ -230,7 +232,37 @@ class Cell:
         
         return f"Agent {agent_name}: running" if agent.is_alive() else f"Agent {agent_name}: stopped"
         
-    
+    def get_metrics(self):
+        """Get real-time metrics for the cell"""
+        metrics = {
+            "cell_id": self.cell_id,
+            "uptime": time.time() - getattr(self, 'start_time', time.time()),
+            "ports": {},
+            "agents": {}
+        }
+        
+        for port_name, port in self.sim.thread_manager.get_ports().items():
+            metrics["ports"][port_name] = {
+                "status": self.link_status(port_name),
+                "packets_sent": getattr(port, 'packets_sent', 0),
+                "packets_received": getattr(port, 'packets_received', 0),
+            }
+            
+        for agent_name, agent in self.agents.items():
+            if agent.is_alive():
+                snapshot = agent.get_snapshot()
+                metrics["agents"][agent_name] = {
+                    'status': 'running',
+                    'trees': len(snapshot.get_trees(agent)),
+                    'snapshot': snapshot.to_dict() if snapshot else None,
+                }
+            else:
+                metrics["agents"][agent_name] = {
+                    'status': 'stopped',
+                    'trees': 0,
+                    'snapshot': None
+                }
+        return metrics
 def main():
     parser = argparse.ArgumentParser(description='Network Cell')
     parser.add_argument('--cell-id', required=True, help='Unique cell identifier')
