@@ -56,6 +56,7 @@ class Agent(threading.Thread):
         self.node_id = node_id
         self.trees = {}
         self.port_paths = {}
+        self.stop_event = threading.Event()
 
     def _broadcast_tree_build(self, exclude_portid: str, tb_packet: TreeBuild):
         for portid, port in self.thread_manager.get_ports().items():
@@ -64,7 +65,7 @@ class Agent(threading.Thread):
 
     def run(self):
         self.logger.info("Agent started")
-        while True:
+        while not self.stop_event.is_set():
             ports = self.thread_manager.get_ports()
             for portid, port in ports.items():
                 if not port.io.signal_q.empty():
@@ -168,6 +169,12 @@ class Agent(threading.Thread):
                             self.logger.info(f"{port.name} -- Received RTP for unknown tree: {rtp_packet.tree_id}")
 
             time.sleep(0.01) # unlock the GIL
+            
+    def stop(self):
+        """Stop the agent thread"""
+        self.logger.info("Stopping Agent")
+        self.stop_event.set()
+        self.join()
 
     def get_snapshot(self):
         """Get a JSON-serializable snapshot of the agent state"""

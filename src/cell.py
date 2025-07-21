@@ -10,6 +10,7 @@ import argparse
 import time
 
 from hermes.sim.Sim import Sim
+from hermes.port.Agent import Agent
 
 class Cell:
     def __init__(self, cell_id, rpc_port):
@@ -19,6 +20,7 @@ class Cell:
         self.rpc_server = None
         self.running = False
         self.port_queues = {}
+        self.agents = {}
         
         
     def start(self):
@@ -49,6 +51,12 @@ class Cell:
             self.rpc_server.register_function(self.shutdown, "shutdown")
             self.rpc_server.register_function(self.heartbeat, "heartbeat")
             self.rpc_server.register_function(self.link_status, "link_status")
+            
+            self.rpc_server.register_function(self.add_agent, "add_agent")
+            self.rpc_server.register_function(self.start_agent, "start_agent")
+            self.rpc_server.register_function(self.stop_agent, "stop_agent")
+            self.rpc_server.register_function(self.list_agents, "list_agents")
+            self.rpc_server.register_function(self.agent_status, "agent_status")
             
             print(f"XML-RPC server started on port {self.rpc_port}")
             self.rpc_server.serve_forever()
@@ -154,7 +162,6 @@ class Cell:
             return f'error: {str(e)}'
                             
             
-        
     
     def heartbeat(self):
         """Health check"""
@@ -164,10 +171,82 @@ class Cell:
         """Cell shutdown"""
         print(f"Shutting down cell {self.cell_id}")
         self.running = False
+
+        for agent_name in list(self.agents.keys()):
+            self.stop_agent(agent_name)
+            
         if self.rpc_server:
             threading.Thread(target=self.rpc_server.shutdown, daemon=True).start()
         
         return "Shutting down..."
+    
+    def add_agent(self, agent_name):
+        """Adds a new agent to the cell"""
+        if agent_name in self.agents:
+            return f"Agent {agent_name} already exists"
+        
+        agent = Agent(self.cell_id, self.sim.thread_manager)
+        
+        self.agents[agent_name] = agent
+        
+        return f"Agent {agent_name} added successfully"
+    
+    def start_agent(self, agent_name):
+        """Starts an agent in the cell."""
+        if agent_name not in self.agents:
+            return f"Agent {agent_name} does not exist"
+        
+        agent = self.agents[agent_name]
+        
+        if not agent.is_alive():
+            agent.start()
+            return f"Agent {agent_name} started successfully"
+        else:
+            return f"Agent {agent_name} is already running"            
+        
+    
+    def stop_agent(self, agent_name):
+        """Stops an agent in the cell."""
+        
+        if agent_name not in self.agents:
+            return f"Agent {agent_name} does not exist"
+        
+        agent = self.agents[agent_name]
+        
+        if agent.is_alive():
+            agent.stop()
+            agent.join(timeout=2.0)
+            
+        del self.agents[agent_name]
+        return f'Agent {agent_name} stopped and removed successfully'
+    
+    def list_agents(self):
+        """Lists all available agents"""
+        if not self.agents:
+            return "No agents available"
+        
+        results = []
+        for name, agent in self.agents.items():
+            status = "running" if agent.is_alive() else "stopped"
+            results.append(f"Agent {name}: {status}")
+            
+        return ", ".join(results)
+    
+    def agent_status(self, agent_name):
+        """Get status of an agent"""
+        if agent_name not in self.agents:
+            return f"Agent {agent_name} does not exist"
+        
+        agent = self.agents[agent_name]
+        
+        return f"Agent {agent_name}: running" if agent.is_alive() else f"Agent {agent_name}: stopped"
+
+        
+        
+         
+        
+        
+        
     
     
 def main():
