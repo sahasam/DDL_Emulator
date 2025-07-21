@@ -53,7 +53,6 @@ class Cell:
             self.rpc_server.register_function(self.link_status, "link_status")
             
             self.rpc_server.register_function(self.add_agent, "add_agent")
-            self.rpc_server.register_function(self.start_agent, "start_agent")
             self.rpc_server.register_function(self.stop_agent, "stop_agent")
             self.rpc_server.register_function(self.list_agents, "list_agents")
             self.rpc_server.register_function(self.agent_status, "agent_status")
@@ -189,21 +188,11 @@ class Cell:
         
         self.agents[agent_name] = agent
         
-        return f"Agent {agent_name} added successfully"
-    
-    def start_agent(self, agent_name):
-        """Starts an agent in the cell."""
-        if agent_name not in self.agents:
-            return f"Agent {agent_name} does not exist"
-        
-        agent = self.agents[agent_name]
-        
         if not agent.is_alive():
             agent.start()
-            return f"Agent {agent_name} started successfully"
+            return f"Agent {agent_name} added and started successfully"
         else:
-            return f"Agent {agent_name} is already running"            
-        
+            return f"Agent {agent_name} is already running"          
     
     def stop_agent(self, agent_name):
         """Stops an agent in the cell."""
@@ -240,14 +229,7 @@ class Cell:
         agent = self.agents[agent_name]
         
         return f"Agent {agent_name}: running" if agent.is_alive() else f"Agent {agent_name}: stopped"
-
         
-        
-         
-        
-        
-        
-    
     
 def main():
     parser = argparse.ArgumentParser(description='Network Cell')

@@ -1,13 +1,35 @@
 import socket
 import xmlrpc.client
+import subprocess
+import time
 
 class ProtoDatacenter:
     def __init__(self):
         self.cells = {}
-        
+        self.processes = {}
+         
     def add_cell(self, cell_id, rpc_port):
         """Connects to a cel"""
         try:
+            cell_script = "src/cell.py"
+            cmd = ['python3', cell_script, "--cell-id", cell_id, "--rpc-port", str(rpc_port)]
+            
+            print(f"Starting cell {cell_id} on port {rpc_port} with command: {' '.join(cmd)}")
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            # if hasattr(self, 'processes'):
+            #     self.processes = {}
+                
+            self.processes[cell_id] = process
+            
+            time.sleep(3)
+            
+            if process.poll() is not None:
+                stdout, stderr = process.communicate()
+                print(f"Cell output: {stdout.decode()}")
+                print(f"Cell error: {stderr.decode()}")
+            
+            
             url = f'http://localhost:{rpc_port}'
             proxy = xmlrpc.client.ServerProxy(url)
             
@@ -22,7 +44,26 @@ class ProtoDatacenter:
         except Exception as e:
             print(f"Failed to connect to cell {cell_id} at port {rpc_port}: {e}")
             return False
-        
+    
+    def remove_cell(self, cell_id):
+        """Remove and shutdown a cell"""
+        if cell_id in self.cells:
+            try:
+                self.cells[cell_id].shutown()
+            except:
+                pass
+            finally:
+                del self.cells[cell_id]
+                
+            if hasattr(self, 'processes') and cell_id in self.processes:
+                self.processes[cell_id].terminate()
+                self.processes[cell_id].wait()
+                del self.processes[cell_id]
+                
+            print(f"Cell {cell_id} removed successfully.")
+                    
+                    
+                      
     def create_link(self, cell1_id, port1_name, cell2_id, port2_name, port1_addr, port2_addr):
         """Create a link between two cells"""
         if cell1_id not in self.cells or cell2_id not in self.cells:
@@ -156,12 +197,12 @@ def main():
     print("Simple Datacenter Controller")
     print("Commands:")
     print("  add <cell_id> <rpc_port>")
+    print("  remove <cell_id>")
     print("  link <cell1> <port1> <cell2> <port2> <addr1> <addr2>")
     print("  unlink <cell1> <port1> <cell2> <port2>")
     print("  status")
     print("  port <cell_id> <port_name>")
     print("  agent_add <cell_id> <agent_name>")
-    print("  agent_start <cell_id> <agent_name>")
     print("  agent_stop <cell_id> <agent_name>")
     print("  agent_list <cell_id>")
     print("  agent_status <cell_id> <agent_name>")
@@ -181,6 +222,10 @@ def main():
                 cell_id, rpc_port = cmd[1], int(cmd[2])
                 dc.add_cell(cell_id, rpc_port)
                 
+            elif cmd[0] == 'remove' and len(cmd) == 2:
+                cell_id = cmd[1]
+                dc.remove_cell(cell_id)
+                
             elif cmd[0] == 'link' and len(cmd) == 7:
                 cell1, port1, cell2, port2, addr1, addr2 = cmd[1:]
                 dc.create_link(cell1, port1, cell2, port2, addr1, addr2)
@@ -199,10 +244,6 @@ def main():
             elif cmd[0] == 'agent_add' and len(cmd) == 3:
                 cell_id, agent_name = cmd[1], cmd[2]
                 dc.agent_add(cell_id, agent_name)
-                
-            elif cmd[0] == 'agent_start' and len(cmd) == 3:
-                cell_id, agent_name = cmd[1], cmd[2]
-                dc.agent_start(cell_id, agent_name)
                 
             elif cmd[0] == 'agent_stop' and len(cmd) == 3:
                 cell_id, agent_name = cmd[1], cmd[2]
