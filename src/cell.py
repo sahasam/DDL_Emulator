@@ -25,6 +25,7 @@ class Cell:
         
     def start(self):
         """Start the cell with XML-RPC server."""
+        self.start_time = time.time()
         self.sim = Sim()
         self.sim.configure_logging()
         
@@ -233,36 +234,89 @@ class Cell:
         return f"Agent {agent_name}: running" if agent.is_alive() else f"Agent {agent_name}: stopped"
         
     def get_metrics(self):
-        """Get real-time metrics for the cell"""
-        metrics = {
-            "cell_id": self.cell_id,
-            "uptime": time.time() - getattr(self, 'start_time', time.time()),
-            "ports": {},
-            "agents": {}
-        }
-        
-        for port_name, port in self.sim.thread_manager.get_ports().items():
-            metrics["ports"][port_name] = {
-                "status": self.link_status(port_name),
-                "packets_sent": getattr(port, 'packets_sent', 0),
-                "packets_received": getattr(port, 'packets_received', 0),
+        """Get real-time metrics from the cell"""
+        try:
+            metrics = {
+                'cell_id': self.cell_id,
+                'uptime': time.time() - getattr(self, 'start_time', time.time()),
+                'ports': {},
+                'agents': {}
             }
             
-        for agent_name, agent in self.agents.items():
-            if agent.is_alive():
-                snapshot = agent.get_snapshot()
-                metrics["agents"][agent_name] = {
-                    'status': 'running',
-                    'trees': len(snapshot.get_trees(agent)),
-                    'snapshot': snapshot.to_dict() if snapshot else None,
+            # Port metrics - only return serializable data
+            ports = self.sim.thread_manager.get_ports()
+            for port_id, port in ports.items():
+                port_info = {
+                    'name': port.name,
+                    'status': 'alive' if port.is_alive() else 'dead'
                 }
-            else:
-                metrics["agents"][agent_name] = {
-                    'status': 'stopped',
-                    'trees': 0,
-                    'snapshot': None
-                }
-        return metrics
+                
+                # Safely get link state as string
+                if hasattr(port, 'protocol_instance') and port.protocol_instance:
+                    if hasattr(port.protocol_instance, 'link_state'):
+                        # Convert enum to string if needed
+                        link_state = port.protocol_instance.link_state
+                        if hasattr(link_state, 'value'):
+                            port_info['link_state'] = str(link_state.value)
+                        else:
+                            port_info['link_state'] = str(link_state)
+                    else:
+                        port_info['link_state'] = 'unknown'
+                else:
+                    port_info['link_state'] = 'no_protocol'
+                    
+                metrics['ports'][port_id] = port_info
+            
+            # Agent metrics - only return serializable data
+            for agent_name, agent in self.agents.items():
+                if agent.is_alive():
+                    try:
+                        snapshot = agent.get_snapshot()
+                        
+                        # Convert trees to simple dict
+                        trees_info = {}
+                        for tree_id, tree_data in snapshot.get('trees', {}).items():
+                            if hasattr(tree_data, 'to_dict'):
+                                trees_info[tree_id] = tree_data.to_dict()
+                            else:
+                                trees_info[tree_id] = str(tree_data)
+                        
+                        # Convert port_paths to simple dict
+                        port_paths_info = {}
+                        for path_id, path_data in snapshot.get('port_paths', {}).items():
+                            if hasattr(path_data, 'serialize'):
+                                try:
+                                    port_paths_info[path_id] = path_data.serialize()
+                                except:
+                                    port_paths_info[path_id] = str(path_data)
+                            else:
+                                port_paths_info[path_id] = str(path_data)
+                        
+                        metrics['agents'][agent_name] = {
+                            'status': 'running',
+                            'trees_count': len(trees_info),
+                            'trees': trees_info,
+                            'node_id': str(snapshot.get('node_id', '')),
+                            'port_paths': port_paths_info
+                        }
+                    except Exception as e:
+                        metrics['agents'][agent_name] = {
+                            'status': 'running',
+                            'error': str(e)
+                        }
+                else:
+                    metrics['agents'][agent_name] = {'status': 'stopped'}
+            
+            return metrics
+            
+        except Exception as e:
+            return {'error': str(e), 'cell_id': self.cell_id}
+
+
+
+
+
+
 def main():
     parser = argparse.ArgumentParser(description='Network Cell')
     parser.add_argument('--cell-id', required=True, help='Unique cell identifier')

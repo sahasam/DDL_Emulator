@@ -4,6 +4,7 @@ import subprocess
 import time
 import tempfile
 import os
+import traceback
 
 class ProtoDatacenter:
     def __init__(self):
@@ -25,7 +26,7 @@ class ProtoDatacenter:
             # Store both process and log file (don't overwrite!)
             self.processes[cell_id] = {'process': process, 'log_file': log_file}
             
-            time.sleep(3)
+            time.sleep(2)
             
             # Check if process died
             if process.poll() is not None:
@@ -228,6 +229,7 @@ class ProtoDatacenter:
             print(f"Metrics for cell {cell_id}: {metrics}")
         except Exception as e:
             print(f"Failed to get metrics for cell {cell_id}: {e}")
+            traceback.print_exc()
             
 def main():
     dc = ProtoDatacenter()
@@ -257,6 +259,11 @@ def main():
                 continue
             
             if cmd[0] == 'quit':
+                for process in dc.processes.values():
+                    if process['process'].poll() is None:
+                        process['process'].terminate()
+                        process['process'].wait()
+                        print(f"Terminated process for cell {process['log_file']}")
                 break
             
             elif cmd[0] == 'add' and len(cmd) == 3:
@@ -274,16 +281,14 @@ def main():
                 cell_id = cmd[1]
                 dc.get_metrics(cell_id)
             elif cmd[0] == 'cleanup':
-                # Clean up all log files
-                if hasattr(dc, 'cell_processes'):
-                    for cell_id, info in dc.cell_processes.items():
+                if hasattr(dc, 'processes'):
+                    for cell_id, info in dc.processes.items():
                         try:
                             os.remove(info['log_file'])
                             print(f"Removed {info['log_file']}")
                         except FileNotFoundError:
                             pass
                 
-                # Also clean up any orphaned log files
                 import glob
                 for log_file in glob.glob("cell_*.log"):
                     try:
@@ -328,19 +333,24 @@ def main():
         
         except KeyboardInterrupt:
             print("\nExiting...")
-            break
-
-        except Exception as e:
-            print(f"Error: {e}")
-            
-        finally:
             for process in dc.processes.values():
                 if process['process'].poll() is None:
                     process['process'].terminate()
                     process['process'].wait()
                     print(f"Terminated process for cell {process['log_file']}")
             
+            break
+
+        except Exception as e:
+            for process in dc.processes.values():
+                if process['process'].poll() is None:
+                    process['process'].terminate()
+                    process['process'].wait()
+                    print(f"Terminated process for cell {process['log_file']}")
+            
+            print(f"Error: {e}")
+            
+           
             
 if __name__ == "__main__":
     main()
-        
