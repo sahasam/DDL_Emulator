@@ -17,7 +17,7 @@ class ThreadManager:
         self.ports = {}
         self._ports_lock = threading.Lock()
         self._tasks = []
-        self._pipes = []
+        self._pipes = {}
         self.agent = None
         self.logger = logging.getLogger('ThreadManager')
 
@@ -82,16 +82,32 @@ class ThreadManager:
         for thread in self._threads:
             thread.join(timeout=0.5)
         
-        for pipe in self._pipes:
-            pipe.close()
+        for port_pipes in self._pipes.values():
+            for pipe in port_pipes:
+                pipe.close()
     
     def register_port(self, port: BasePort) -> None:
         with self._ports_lock:
             self.ports[port.port_id] = port
             self._threads.append(port)
-    
-    def register_pipes(self, pipes: list[PipeQueue]) -> None:
-        self._pipes.extend(pipes)
+            
+    def delete_port(self, port_id) -> bool:
+        with self._ports_lock:
+            if port_id in self.ports:
+                ports_to_delete = self.ports[port_id]
+            
+                if ports_to_delete in self._threads:
+                    self._threads.remove(ports_to_delete)
+                
+                del self.ports[port_id]
+                del self._pipes[port_id]
+                
+                return True
+            else:
+                return False
+        
+    def register_pipes(self, port_id, pipes: list[PipeQueue]) -> None:
+        self._pipes[port_id] = pipes
 
     def get_ports(self) -> Dict[str, BasePort]:
         with self._ports_lock:

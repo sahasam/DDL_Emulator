@@ -66,6 +66,25 @@ class ProtoDatacenter:
         except Exception as e:
             print(f"Failed to check port {port_name} on cell {cell_id}: {e}")
             
+    def unlink(self, cell1_id, port1_name, cell2_id, port2_name):
+        """Unlink two ports between cells"""
+        if cell1_id not in self.cells or cell2_id not in self.cells:
+            print(f"One or both cells {cell1_id}, {cell2_id} are not connected.")
+            return False
+        
+        try:
+            result1 = self.cells[cell1_id].unbind_port(port1_name)
+            print(f"Cell {cell1_id} unbind result: {result1}")
+            
+            result2 = self.cells[cell2_id].unbind_port(port2_name)
+            print(f"Cell {cell2_id} unbind result: {result2}")
+            
+            return True
+        
+        except Exception as e:
+            print(f"Failed to unlink between {cell1_id} and {cell2_id}: {e}")
+            return False
+            
 def main():
     dc = ProtoDatacenter()
     
@@ -73,6 +92,7 @@ def main():
     print("Commands:")
     print("  add <cell_id> <rpc_port>")
     print("  link <cell1> <port1> <cell2> <port2> <addr1> <addr2>")
+    print("  unlink <cell1> <port1> <cell2> <port2>")
     print("  status")
     print("  port <cell_id> <port_name>")
     print("  quit")
@@ -101,6 +121,10 @@ def main():
             elif cmd[0] == 'port' and len(cmd) == 3:
                 cell_id, port_name = cmd[1], cmd[2]
                 dc.check_port_status(cell_id, port_name)
+                
+            elif cmd[0] == 'unlink' and len(cmd) == 5:
+                cell1, port1, cell2, port2 = cmd[1:]
+                dc.unlink(cell1, port1, cell2, port2)
                 
             else:
                 print("Invalid command. Type 'quit' to exit.")

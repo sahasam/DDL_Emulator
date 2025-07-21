@@ -18,6 +18,8 @@ class Cell:
         self.sim = None
         self.rpc_server = None
         self.running = False
+        self.port_queues = {}
+        
         
     def start(self):
         """Start the cell with XML-RPC server."""
@@ -88,8 +90,8 @@ class Cell:
             )
 
             self.sim.thread_manager.register_port(port)
-            self.sim.thread_manager.register_pipes([read_q, write_q, signal_q])
-            
+            port_key = f"{self.cell_id}:{port_name}"
+            self.sim.thread_manager.register_pipes(port_key, [signal_q, read_q, write_q])
             port.start()
             
             print(f"Port {port_name} started successfully")
@@ -106,7 +108,26 @@ class Cell:
 
     def unbind_port(self, port_name):
         """Unbind an existing port"""
-        pass
+        try:
+            ports = self.sim.thread_manager.get_ports()
+            port_key = f"{self.cell_id}:{port_name}"
+            
+            if port_key not in ports:
+                return f"Port {port_name} is not bound"
+            
+            port = ports[port_key]
+            
+            port.stop()  # Signal the port to stop
+            port.join(timeout=2.0)
+            
+
+            success = self.sim.thread_manager.delete_port(port_key)
+            
+            return f'Port {port_name} unbound successfully' if success else f'Failed to unbind port {port_name}'
+        
+        except Exception as e:
+            return f"Error unbinding {port_name}: {str(e)}"
+        
     
     def link_status(self, port_name):
         """Get status of a port"""
