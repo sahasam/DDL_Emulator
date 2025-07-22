@@ -179,6 +179,31 @@ class ProtoDatacenter:
             print(f"Failed to get metrics for cell {cell_id}: {e}")
             traceback.print_exc()
             
+    def inject_fault(self, cell_id, port_name, fault_type, **kwargs):
+        """Inject a fault into a cell"""
+        if cell_id not in self.cells:
+            print(f"Cell {cell_id} is not connected.")
+            return
+        
+        try:
+            result = self.cells[cell_id].inject_fault(port_name, fault_type, kwargs)
+            print(f"Fault injected into cell {cell_id}: {result}")
+        except Exception as e:
+            print(f"Failed to inject fault into cell {cell_id}: {e}")
+            
+    def clear_fault(self, cell_id, port_name):
+        """Clears a fault in a cell"""
+        
+        if cell_id not in self.cells:
+            print(f"Cell {cell_id} is not connected.")
+            return
+        
+        try:
+            result = self.cells[cell_id].clear_fault(port_name)
+            print(f"Fault cleared in cell {cell_id}: {result}")
+        except Exception as e:
+            print(f"Failed to clear fault in cell {cell_id}: {e}")
+            
 def main():
     dc = ProtoDatacenter()
     
@@ -255,6 +280,23 @@ def main():
             elif cmd[0] == 'unlink' and len(cmd) == 5:
                 cell1, port1, cell2, port2 = cmd[1:]
                 dc.unlink(cell1, port1, cell2, port2)
+                
+            elif cmd[0] == 'inject_fault' and len(cmd) >= 4:
+                cell_id, port_name, fault_type = cmd[1:4]
+                kwargs = {}
+                
+                if fault_type == 'drop' and len(cmd) == 5:
+                    kwargs['drop_rate'] = float(cmd[4])
+                elif fault_type == 'delay' and len(cmd) == 5:
+                    kwargs['delay_ms'] = int(cmd[4])
+                elif fault_type == 'disconnect' and len(cmd) == 5:
+                    pass
+                
+                dc.inject_fault(cell_id, port_name, fault_type, **kwargs)
+                
+            elif cmd[0] == 'clear_fault' and len(cmd) == 3:
+                cell_id, port_name = cmd[1:]
+                dc.clear_fault(cell_id, port_name)
             
             
             else:
@@ -278,6 +320,8 @@ def main():
                     print(f"Terminated process for cell {process['log_file']}")
             
             print(f"Error: {e}")
+        
+        
             
            
             

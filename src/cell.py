@@ -257,10 +257,10 @@ class Cell:
                             'status': 'running',
                             'error': str(e)
                         }
-                else:
-                    metrics['agent'] = {'status': 'stopped'}
+            else:
+                metrics['agent'] = {'status': 'stopped'}
             
-                return metrics
+            return metrics
             
         except Exception as e:
             return {'error': str(e), 'cell_id': self.cell_id}
