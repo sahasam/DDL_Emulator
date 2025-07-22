@@ -197,31 +197,73 @@ class Cell:
                 'agent': {}
             }
             
-            # Port metrics - only return serializable data
+            # Enhanced Port metrics with networking data
             ports = self.sim.thread_manager.get_ports()
             for port_id, port in ports.items():
                 port_info = {
                     'name': port.name,
-                    'status': 'alive' if port.is_alive() else 'dead'
+                    'port_id': port_id,
+                    'status': 'alive' if port.is_alive() else 'dead',
+                    'packets_sent': 0,
+                    'packets_received': 0,
+                    'bytes_sent': 0,
+                    'bytes_received': 0,
+                    'last_activity': 'never',
+                    'connection_time': 0
                 }
                 
-                # Safely get link state as string
+                # Get link state
                 if hasattr(port, 'protocol_instance') and port.protocol_instance:
-                    if hasattr(port.protocol_instance, 'link_state'):
-                        # Convert enum to string if needed
-                        link_state = port.protocol_instance.link_state
+                    protocol = port.protocol_instance
+                    
+                    if hasattr(protocol, 'link_state'):
+                        link_state = protocol.link_state
                         if hasattr(link_state, 'value'):
                             port_info['link_state'] = str(link_state.value)
                         else:
                             port_info['link_state'] = str(link_state)
                     else:
                         port_info['link_state'] = 'unknown'
+                    
+                    # Get protocol statistics if available
+                    if hasattr(protocol, 'statistics'):
+                        stats = protocol.statistics
+                        port_info.update({
+                            'packets_sent': stats.get('packets_sent', 0),
+                            'packets_received': stats.get('packets_received', 0),
+                            'bytes_sent': stats.get('bytes_sent', 0),
+                            'bytes_received': stats.get('bytes_received', 0),
+                            'events': stats.get('events', 0),
+                            'round_trip_latency': stats.get('round_trip_latency', 0)
+                        })
+                    
+                    # Get queue lengths (important for debugging)
+                    if hasattr(port, 'io'):
+                        port_info.update({
+                            'read_queue_size': port.io.read_q.qsize() if hasattr(port.io.read_q, 'qsize') else 0,
+                            'write_queue_size': port.io.write_q.qsize() if hasattr(port.io.write_q, 'qsize') else 0,
+                            'signal_queue_size': port.io.signal_q.qsize() if hasattr(port.io.signal_q, 'qsize') else 0
+                        })
+                    
+                    # Get fault injector status
+                    if hasattr(port, 'faultInjector') and port.faultInjector:
+                        fault_state = port.faultInjector.get_state()
+                        port_info['fault_injection'] = {
+                            'active': fault_state.is_active,
+                            'drop_rate': fault_state.drop_rate,
+                            'delay_ms': fault_state.delay_ms
+                        }
+                    
+                    # Get neighbor information
+                    if hasattr(protocol, 'neighbor_portid'):
+                        port_info['neighbor_portid'] = str(protocol.neighbor_portid) if protocol.neighbor_portid else 'none'
+                        
                 else:
                     port_info['link_state'] = 'no_protocol'
                     
                 metrics['ports'][port_id] = port_info
             
-            # Agent metrics - only return serializable data
+            # Enhanced Agent metrics with tree details
             if hasattr(self, 'agent') and self.agent.is_alive():
                 try:
                     snapshot = self.agent.get_snapshot()
@@ -229,11 +271,13 @@ class Cell:
                     trees_info = {}
                     for tree_id, tree_data in snapshot.get('trees', {}).items():
                         if hasattr(tree_data, 'to_dict'):
-                            trees_info[tree_id] = tree_data.to_dict()
+                            tree_dict = tree_data.to_dict()
+                            # Add more tree details
+                            tree_dict['leafward_ports_count'] = len(tree_dict.get('leafward_portids', []))
+                            trees_info[tree_id] = tree_dict
                         else:
                             trees_info[tree_id] = str(tree_data)
-                            
-                            
+                    
                     port_paths_info = {}
                     for path_id, path_data in snapshot.get('port_paths', {}).items():
                         if hasattr(path_data, 'serialize'):
@@ -243,20 +287,21 @@ class Cell:
                                 port_paths_info[path_id] = str(path_data)
                         else:
                             port_paths_info[path_id] = str(path_data)
-                            
+                    
                     metrics['agent'] = {
                         'status': 'running',
                         'trees_count': len(trees_info),
                         'trees': trees_info,
                         'node_id': str(snapshot.get('node_id', '')),
-                        'port_paths': port_paths_info
+                        'port_paths': port_paths_info,
+                        'total_leafward_connections': sum(len(tree.get('leafward_portids', [])) for tree in trees_info.values() if isinstance(tree, dict))
                     }
-           
+
                 except Exception as e:
-                        metrics['agent'] = {
-                            'status': 'running',
-                            'error': str(e)
-                        }
+                    metrics['agent'] = {
+                        'status': 'running',
+                        'error': str(e)
+                    }
             else:
                 metrics['agent'] = {'status': 'stopped'}
             
