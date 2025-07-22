@@ -12,6 +12,8 @@ import time
 from hermes.sim.Sim import Sim
 from hermes.port.Agent import Agent
 
+from hermes.faults.FaultInjector import FaultState
+
 class Cell:
     def __init__(self, cell_id, rpc_port):
         self.cell_id = cell_id
@@ -56,12 +58,9 @@ class Cell:
             self.rpc_server.register_function(self.shutdown, "shutdown")
             self.rpc_server.register_function(self.heartbeat, "heartbeat")
             self.rpc_server.register_function(self.link_status, "link_status")
-            
-            # self.rpc_server.register_function(self.add_agent, "add_agent")
-            # self.rpc_server.register_function(self.stop_agent, "stop_agent")
-            # self.rpc_server.register_function(self.list_agents, "list_agents")
-            # self.rpc_server.register_function(self.agent_status, "agent_status")
             self.rpc_server.register_function(self.get_metrics, "get_metrics")
+            self.rpc_server.register_function(self.inject_fault, "inject_fault")
+            self.rpc_server.register_function(self.clear_fault, "clear_fault")
             
             print(f"XML-RPC server started on port {self.rpc_port}")
             self.rpc_server.serve_forever()
@@ -265,8 +264,60 @@ class Cell:
             
         except Exception as e:
             return {'error': str(e), 'cell_id': self.cell_id}
+        
+    def inject_fault(self, port_name, fault_type, params):
+        """Fault injection for a specific port"""
+        
+        try:
+            ports = self.sim.thread_manager.get_ports()
+            port_key = f"{self.cell_id}:{port_name}"
+            
+            if port_key not in ports:
+                return f"Port {port_name} is not bound"
+            
+            port = ports[port_key]
+            
+            if fault_type == 'drop':
+                drop_rate = params.get('drop_rate', 0.1)
+                fault_state = FaultState(is_active=True, drop_rate=drop_rate, delay_ms=0)
+                port.faultInjector.update_state(fault_state)
+                return f"Injecting {drop_rate * 100}% drop fault on port {port_name}"
+            
+            elif fault_type == 'delay':
+                delay_ms = params.get('delay_ms', 100)
+                fault_state = FaultState(is_active=True, drop_rate=0.0, delay_ms=delay_ms)
+                port.faultInjector.update_state(fault_state)
+                return f"Injecting {delay_ms}ms delay fault on port {port_name}"
+            
+            elif fault_type == 'disconnect':
+                port.set_disconnected(True)
+                return f"Disconnecting port {port_name}"
+            
+            else:
+                return f"Unknown fault type: {fault_type}"
+        except Exception as e:
+            return f"Error injecting fault on {port_name}: {str(e)}"
+        
+    def clear_fault(self, port_name):
+        """Clear fault injections for a specific port."""       
+        try:
+            ports = self.sim.thread_manager.get_ports()
+            port_key = f"{self.cell_id}:{port_name}"
+            
+            if port_key not in ports:
+                return f"Port {port_name} is not bound"
+            
+            port = ports[port_key]
+            
+            fault_state = FaultState(is_active=False, drop_rate=0.0, delay_ms=0)
+            port.faultInjector.update_state(fault_state)
+            
+            port.set_disconnected(False)
+            
+            return f"Cleared faults on port {port_name}"
 
-
+        except Exception as e:
+            return f"Error clearing faults on {port_name}: {str(e)}"
 
 
 
