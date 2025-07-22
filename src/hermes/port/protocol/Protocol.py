@@ -2,7 +2,7 @@ import asyncio
 from enum import Enum
 import logging
 from typing import Callable, Optional
-
+import time
 from hermes.faults.FaultInjector import ThreadSafeFaultInjector
 from hermes.model.ports import PortIO
 from hermes.model.types import IPV6_ADDR
@@ -32,6 +32,21 @@ class EthernetProtocol(asyncio.DatagramProtocol):
         self.sending_addr = sending_addr
         self.is_client = is_client
 
+        self.statistics = {
+            'packet_sent': 0,
+            'packet_received': 0,
+            'bytes_sent': 0,
+            'bytes_received': 0,
+            'heartbeat_sent': 0,
+            'heartbeat_received': 0,
+            'data_packets_sent': 0,
+            'data_packets_received': 0,
+            'connection_time': 0,
+            'last_activity': time.time(),
+            'handshake_attempts': 0,
+            'events': 0
+        }
+
         self._ping_alive_task: Optional[asyncio.Task] = None
         self._send_task: Optional[asyncio.Task] = None
         self._timeout_task: Optional[asyncio.Task] = None
@@ -46,6 +61,7 @@ class EthernetProtocol(asyncio.DatagramProtocol):
 
     def connection_made(self, transport):
         self.transport = transport
+        self.statistics['connection_time'] = time.time()
 
         sock = transport.get_extra_info('socket')
         local_addr = sock.getsockname()
@@ -76,6 +92,12 @@ class EthernetProtocol(asyncio.DatagramProtocol):
                     self.transport.sendto(b"HEARTBEAT")
                 else:
                     self.transport.sendto(b"HEARTBEAT", self.sending_addr)
+                    
+                # tracking statistics
+                self.statistics['heartbeat_sent'] += 1
+                self.statistics['packets_sent'] += 1
+                self.statistics['bytes_sent'] += len(b"HEARTBEAT")
+                
         except asyncio.CancelledError:
             self.logger.info("Heartbeat task cancelled")
         except Exception as e:
@@ -98,9 +120,16 @@ class EthernetProtocol(asyncio.DatagramProtocol):
     def datagram_received(self, data, addr):
         self._last_received = asyncio.get_event_loop().time()
         
+        self.statistics['packet_received'] += 1
+        self.statistics['bytes_received'] += len(data)
+        self.statistics['last_activity'] = time.time()
+        self.statistics['events'] += 1
+        
         if data == b"HEARTBEAT":
+            self.statistics['heartbeat_received'] += 1
             return
         
+        self.statistics['data_packets_received'] += 1
         self._packet_handler(data, addr)
     
     def _handle_handshake(self, data, addr):
@@ -124,7 +153,12 @@ class EthernetProtocol(asyncio.DatagramProtocol):
             self.neighbor_portid = data.split(b" ")[1].decode('utf-8')
             self.link_state = self.LinkState.CONNECTED
             self.sending_addr = addr
-            self.transport.sendto(b"YESIAM " + self.name.encode('utf-8'), addr)
+            response_data = b"YESTHISIS " + self.name.encode('utf-8')
+            self.transport.sendto(response_data, addr)
+            
+            self.statistics['packets_sent'] += 1
+            self.statistics['bytes_sent'] += len(response_data)
+            
             # Switch to normal packet handling
             self._packet_handler = self._handle_normal_packet
             # Start send task
@@ -149,8 +183,14 @@ class EthernetProtocol(asyncio.DatagramProtocol):
                     self.logger.info("ping alive timeout")
                     self.transport.close()
                     return
+                ping_data = b"AREYOUTHERE " + self.name.encode('utf-8')
+                self.transport.sendto(ping_data)
+            
+                self.statistics['handshake_attempts'] += 1
+                self.statistics['packets_sent'] += 1
+                self.statistics['bytes_sent'] += len(ping_data)
+                
                 self.logger.info(f"Ping alive -- sending AREYOUTHERE")
-                self.transport.sendto(b"AREYOUTHERE " + self.name.encode('utf-8'))
         except asyncio.CancelledError:
             self.logger.info("Ping alive task cancelled")
         except Exception as e:
@@ -164,6 +204,12 @@ class EthernetProtocol(asyncio.DatagramProtocol):
                 if not self.io.write_q.empty():
                     data = self.io.write_q.get()
                     self.transport.sendto(data)
+                    
+                    self.statistics['data_packets_sent'] += 1
+                    self.statistics['packets_sent'] += 1
+                    self.statistics['bytes_sent'] += len(data)
+                    self.statistics['last_activity'] = time.time()
+                    
                 await asyncio.sleep(0)
         except asyncio.CancelledError:
             self.logger.info("Process send cancelled")
@@ -178,6 +224,12 @@ class EthernetProtocol(asyncio.DatagramProtocol):
                 if not self.io.write_q.empty():
                     data = self.io.write_q.get()
                     self.transport.sendto(data, self.sending_addr)
+                    
+                    self.statistics['data_packets_sent'] += 1
+                    self.statistics['packets_sent'] += 1
+                    self.statistics['bytes_sent'] += len(data)
+                    self.statistics['last_activity'] = time.time()
+                    
                 await asyncio.sleep(0)
         except asyncio.CancelledError:
             self.logger.info("Process send cancelled")
@@ -185,7 +237,22 @@ class EthernetProtocol(asyncio.DatagramProtocol):
             self.logger.error(f"Error in _process_send_client: {e}", exc_info=True)
     
     def get_link_status(self):
+        uptime = time.time() - self.statistics['connection_time']
+        
         return {
             "protocol": "EthernetProtocol",
             "status": self.link_state.value,
+             "statistics": {
+                "packets_sent": self.statistics['packets_sent'],
+                "packets_received": self.statistics['packets_received'],
+                "bytes_sent": self.statistics['bytes_sent'],
+                "bytes_received": self.statistics['bytes_received'],
+                "heartbeats_sent": self.statistics['heartbeats_sent'],
+                "heartbeats_received": self.statistics['heartbeats_received'],
+                "data_packets_sent": self.statistics['data_packets_sent'],
+                "data_packets_received": self.statistics['data_packets_received'],
+                "uptime_seconds": uptime,
+                "last_activity_ago": time.time() - self.statistics['last_activity'],
+                "events": self.statistics['events']
+            }
         }
