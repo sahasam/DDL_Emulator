@@ -12,7 +12,7 @@ class ProtoDatacenter:
         self.cells = {}
         self.processes = {}
          
-    def add_cell(self, cell_id, rpc_port):
+    def add_cell(self, cell_id: str, rpc_port: int) -> dict:
         """Connects to a cell"""
         try:
             cell_script = "src/cell.py"
@@ -36,10 +36,10 @@ class ProtoDatacenter:
                     with open(log_file, 'r') as f:
                         output = f.read()
                     print(f"Cell process died. Log output:\n{output}")
-                    return False
+                    return {'success': False, 'message': f'Cell process for {cell_id} died. Check log file {log_file}'}
                 except FileNotFoundError:
                     print(f"Cell process died and no log file found")
-                    return False
+                    return {'success': False, 'message': f'Cell process for {cell_id} died and no log file found.'}
             
             # Try to connect
             url = f'http://localhost:{rpc_port}'
@@ -57,7 +57,7 @@ class ProtoDatacenter:
             print(f"Failed to connect to cell {cell_id} at port {rpc_port}: {e}")
             return False
 
-    def remove_cell(self, cell_id):
+    def remove_cell(self, cell_id: int) -> dict:
         """Remove and shutdown a cell"""
         if cell_id in self.cells:
             try:
@@ -66,6 +66,8 @@ class ProtoDatacenter:
                 pass
             finally:
                 del self.cells[cell_id]
+        else:
+            return {'success': False, 'message': f'Cell {cell_id} not found.'}
                 
         if hasattr(self, 'processes') and cell_id in self.processes:
             process_info = self.processes[cell_id]
@@ -83,15 +85,16 @@ class ProtoDatacenter:
             del self.processes[cell_id]
             
         print(f"Cell {cell_id} removed successfully.")
+        return {'success': True, 'message': f'Cell {cell_id} removed successfully.'}
         
              
                     
                       
-    def create_link(self, cell1_id, port1_name, cell2_id, port2_name, port1_addr, port2_addr):
+    def create_link(self, cell1_id, port1_name, cell2_id, port2_name, port1_addr, port2_addr) -> dict:
         """Create a link between two cells"""
         if cell1_id not in self.cells or cell2_id not in self.cells:
             print(f"One or both cells {cell1_id}, {cell2_id} are not connected.")
-            return False
+            return {'success': False, 'message': f'One or both cells {cell1_id}, {cell2_id} are not connected.'}
         
         try:
             config1 = {"interface": port1_addr}
@@ -102,23 +105,35 @@ class ProtoDatacenter:
             result2 = self.cells[cell2_id].bind_port(port2_name, config2)
             print(f"Cell {cell2_id} bind result: {result2}")
             
-            return True
+            return {'success': True, 'message': f'Linked {cell1_id}:{port1_name} and {cell2_id}:{port2_name}'}
         
         except Exception as e:
             print(f"Failed to create link between {cell1_id} and {cell2_id}: {e}")
-            return False
+            return {'success': False, 'message': f'Failed to create link between {cell1_id} and {cell2_id}: {e}'}
         
     def check_status(self):
         """checks status of all cells"""
         print("\n--- Cell Status ---")
-        for cell_id, proxy in self.cells.items():
-            try:
-                status = proxy.heartbeat()
-                print(f"Cell {cell_id}: {status}")
-            except Exception as e:
-                print(f"Cell {cell_id} is unreachable: {e}")
+        output = ['--- Cell Status ---']
+        try:
+            for cell_id, proxy in self.cells.items():
+                try:
+                    status = proxy.heartbeat()
+                    print(f"Cell {cell_id}: {status}")
+                    output.append(f"Cell {cell_id}: {status}")
+                    
+                except Exception as e:
+                    print(f"Cell {cell_id} is unreachable: {e}")
+                    output.append(f"Cell {cell_id} is unreachable: {e}")
+                    
+            return {'success': True, 'message': '\n'.join(output)}
+        
+        except Exception as e:
+            print(f"Failed to check status: {e}")
+            traceback.print_exc()
+            return {'success': False, 'message': f'Failed to check status: {e}'}
                 
-    def check_port_status(self, cell_id, port_name):
+    def check_port_status(self, cell_id, port_name)-> dict:
         """Checks the status of a specific port"""
         if cell_id not in self.cells:
             print(f"Cell {cell_id} is not connected.")
@@ -127,14 +142,16 @@ class ProtoDatacenter:
         try:
             status = self.cells[cell_id].link_status(port_name)
             print(f"Port {port_name} on cell {cell_id}: {status}")
+            return {'success': True, 'message': f'Port {port_name} on cell {cell_id}: {status}'}
         except Exception as e:
             print(f"Failed to check port {port_name} on cell {cell_id}: {e}")
+            return {'success': False, 'message': f'Failed to check port {port_name} on cell {cell_id}: {e}'}    
             
-    def unlink(self, cell1_id, port1_name, cell2_id, port2_name):
+    def unlink(self, cell1_id: str, port1_name: str, cell2_id: str, port2_name: str) -> str:
         """Unlink two ports between cells"""
         if cell1_id not in self.cells or cell2_id not in self.cells:
             print(f"One or both cells {cell1_id}, {cell2_id} are not connected.")
-            return False
+            return f'One or both cells {cell1_id}, {cell2_id} are not connected.'
         
         try:
             result1 = self.cells[cell1_id].unbind_port(port1_name)
@@ -143,14 +160,14 @@ class ProtoDatacenter:
             result2 = self.cells[cell2_id].unbind_port(port2_name)
             print(f"Cell {cell2_id} unbind result: {result2}")
             
-            return True
+            return f'Unlinked {cell1_id}:{port1_name} and {cell2_id}:{port2_name}'
         
         except Exception as e:
             print(f"Failed to unlink between {cell1_id} and {cell2_id}: {e}")
-            return False
+            return  f'Failed to unlink between {cell1_id} and {cell2_id}: {e}'
         
    
-    def get_logs(self, cell_id):
+    def get_logs(self, cell_id: str) -> str:
         """Fetch logs from a cell"""
         if hasattr(self, 'processes') and cell_id in self.processes:
             
@@ -161,52 +178,64 @@ class ProtoDatacenter:
                     print(f"=== Last 20 Lines from {cell_id} ===")
                     for line in lines[-20:]:
                         print(line.strip())
+                        
+                    return ''.join(lines[-20:]).strip()
             except FileNotFoundError:
                 print(f"Log file for cell {cell_id} not found.")
+                return 'Cell not found or no logs available.'
         else:
             print(f'Cell {cell_id} not found or no logs available.')
+            return 'Cell not found or no logs available.'
             
         
-    def get_metrics(self, cell_id):
+    def get_metrics(self, cell_id) -> dict:
         """Get metrics from a cell"""
         if cell_id not in self.cells:
             print(f"Cell {cell_id} is not connected.")
-            return
+            return {'success': False, 'message': f'Cell {cell_id} is not connected.'}
         
         try:
             metrics = self.cells[cell_id].get_metrics()
             print(f"Metrics for cell {cell_id}: {metrics}")
+            return metrics
         except Exception as e:
             print(f"Failed to get metrics for cell {cell_id}: {e}")
             traceback.print_exc()
+            return {'success': False, 'message': f'Failed to get metrics for cell {cell_id}: {e}'}
             
-    def inject_fault(self, cell_id, port_name, fault_type, **kwargs):
+    def inject_fault(self, cell_id, port_name, fault_type, **kwargs) -> dict:
         """Inject a fault into a cell"""
         if cell_id not in self.cells:
             print(f"Cell {cell_id} is not connected.")
-            return
+            return {'success': False, 'message': f'Cell {cell_id} is not connected.'}
         
         try:
             result = self.cells[cell_id].inject_fault(port_name, fault_type, kwargs)
             print(f"Fault injected into cell {cell_id}: {result}")
+            return {'success': True, 'message': f'Fault injected into cell {cell_id}: {result}'}
+        
         except Exception as e:
             print(f"Failed to inject fault into cell {cell_id}: {e}")
+            return {'success': False, 'message': f'Failed to inject fault into cell {cell_id}: {e}'}
             
-    def clear_fault(self, cell_id, port_name):
+    def clear_fault(self, cell_id, port_name) -> dict:
         """Clears a fault in a cell"""
         
         if cell_id not in self.cells:
             print(f"Cell {cell_id} is not connected.")
-            return
+            return {'success': False, 'message': f'Cell {cell_id} is not connected.'}
         
         try:
             result = self.cells[cell_id].clear_fault(port_name)
             print(f"Fault cleared in cell {cell_id}: {result}")
+            return {'success': True, 'message': f'Fault cleared in cell {cell_id}: {result}'}
+            
         except Exception as e:
             print(f"Failed to clear fault in cell {cell_id}: {e}")
+            return {'success': False, 'message': f'Failed to clear fault in cell {cell_id}: {e}'}
 
             
-    def load_topology(self, topology_file):
+    def load_topology(self, topology_file) -> dict:
         try:
             with open(topology_file, 'r') as f:
                 config = yaml.safe_load(f)
@@ -222,7 +251,7 @@ class ProtoDatacenter:
                 success = self.add_cell(cell_id, rpc_port)
                 if not success:
                     print(f"Failed to create cell {cell_id} on port {rpc_port}")
-                    return False
+                    return {'success': False, 'message': f'Failed to create cell {cell_id} on port {rpc_port}'}
                 
                 #TODO: ADD SLEEP DURING TESTING
                 
@@ -231,12 +260,12 @@ class ProtoDatacenter:
                 success = self._configure_link_from_config(link_config, link_index)
                 if not success:
                     print(f"Failed to create link {link_index} from config")
-                    return False
+                    return {'success': False, 'message': f'Failed to create link {link_index} from config'}
                 
                 #TODO: ADD SLEEP
                 
             print('--- Topology Loaded Successfully ---')
-            return True
+            return {'success': True, 'message': 'Topology loaded successfully.'}
     
         except Exception as e:
             print(f"Failed to load topology from {topology_file}: {e}")
