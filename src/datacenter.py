@@ -148,59 +148,7 @@ class ProtoDatacenter:
             print(f"Failed to unlink between {cell1_id} and {cell2_id}: {e}")
             return False
         
-    def agent_add(self, cell_id, agent_name):
-        """Adds an agent to a cell"""
-        if cell_id not in self.cells:
-            print(f"Cell {cell_id} is not connected.")
-            return
-        
-        try:
-            result = self.cells[cell_id].add_agent(agent_name)
-            print(f"Agent {agent_name} added and started in cell {cell_id}: {result}")
-        except Exception as e:
-            print(f"Failed to add agent {agent_name} to cell {cell_id}: {e}")
-            
    
-    def agent_stop(self, cell_id, agent_name):
-        """Stop agent for a cell"""
-        if cell_id not in self.cells:
-            print(f"Cell {cell_id} is not connected.")
-            return
-        
-        try:
-            result = self.cells[cell_id].stop_agent(agent_name)
-            print(f"Agent {agent_name} stopped in cell {cell_id}: {result}")
-            
-        except Exception as e:
-            print(f"Failed to stop agent {agent_name} in cell {cell_id}: {e}")
-            
-    def agent_list(self, cell_id):
-        """Lists all available agents in a cell"""
-        
-        if cell_id not in self.cells:
-            print(f"Cell {cell_id} is not connected.")
-            return
-        
-        try:
-            result = self.cells[cell_id].list_agents()
-            print(f"Agents in cell: {result}")
-            
-        except Exception as e:
-            print(f"Failed to list agents in cell {cell_id}: {e}")
-            
-    def agent_status(self, cell_id, agent_name):
-        """Get status of an agent in a cell"""
-        if cell_id not in self.cells:
-            print(f"Cell {cell_id} is not connected.")
-            return
-        
-        try:
-            status = self.cells[cell_id].agent_status(agent_name)
-            print(f"Agent {agent_name} status in cell {cell_id}: {status}")
-        except Exception as e:
-            print(f"Failed to get status of agent {agent_name} in cell {cell_id}: {e}")
-            
-
     def get_logs(self, cell_id):
         """Fetch logs from a cell"""
         if hasattr(self, 'processes') and cell_id in self.processes:
@@ -242,10 +190,6 @@ def main():
     print("  unlink <cell1> <port1> <cell2> <port2>")
     print("  status")
     print("  port <cell_id> <port_name>")
-    print("  agent_add <cell_id> <agent_name>")
-    print("  agent_stop <cell_id> <agent_name>")
-    print("  agent_list <cell_id>")
-    print("  agent_status <cell_id> <agent_name>")
     print("  logs <cell_id>")
     print("  get_metrics <cell_id>")
     print("  cleanup")
@@ -312,22 +256,7 @@ def main():
                 cell1, port1, cell2, port2 = cmd[1:]
                 dc.unlink(cell1, port1, cell2, port2)
             
-            elif cmd[0] == 'agent_add' and len(cmd) == 3:
-                cell_id, agent_name = cmd[1], cmd[2]
-                dc.agent_add(cell_id, agent_name)
-                
-            elif cmd[0] == 'agent_stop' and len(cmd) == 3:
-                cell_id, agent_name = cmd[1], cmd[2]
-                dc.agent_stop(cell_id, agent_name)
-                
-            elif cmd[0] == 'agent_list' and len(cmd) == 2:
-                cell_id = cmd[1]
-                dc.agent_list(cell_id)
-                
-            elif cmd[0] == 'agent_status' and len(cmd) == 3:
-                cell_id, agent_name = cmd[1], cmd[2]
-                dc.agent_status(cell_id, agent_name)
-                
+            
             else:
                 print("Invalid command. Type 'quit' to exit.")
         

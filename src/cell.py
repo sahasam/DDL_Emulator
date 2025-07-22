@@ -20,7 +20,6 @@ class Cell:
         self.rpc_server = None
         self.running = False
         self.port_queues = {}
-        self.agents = {}
         
         
     def start(self):
@@ -31,6 +30,11 @@ class Cell:
         
         # start rpc server
         self._start_rpc_server()
+        self.agent = Agent(self.cell_id, self.sim.thread_manager)
+        
+        if not self.agent.is_alive():
+            self.agent.start()
+            print(f"Agent started for cell {self.cell_id}")
         
         try:
             while self.running:
@@ -53,10 +57,10 @@ class Cell:
             self.rpc_server.register_function(self.heartbeat, "heartbeat")
             self.rpc_server.register_function(self.link_status, "link_status")
             
-            self.rpc_server.register_function(self.add_agent, "add_agent")
-            self.rpc_server.register_function(self.stop_agent, "stop_agent")
-            self.rpc_server.register_function(self.list_agents, "list_agents")
-            self.rpc_server.register_function(self.agent_status, "agent_status")
+            # self.rpc_server.register_function(self.add_agent, "add_agent")
+            # self.rpc_server.register_function(self.stop_agent, "stop_agent")
+            # self.rpc_server.register_function(self.list_agents, "list_agents")
+            # self.rpc_server.register_function(self.agent_status, "agent_status")
             self.rpc_server.register_function(self.get_metrics, "get_metrics")
             
             print(f"XML-RPC server started on port {self.rpc_port}")
@@ -174,65 +178,16 @@ class Cell:
         print(f"Shutting down cell {self.cell_id}")
         self.running = False
 
-        for agent_name in list(self.agents.keys()):
-            self.stop_agent(agent_name)
+        if hasattr(self, 'agent') and self.agent.is_alive():
+            self.agent.stop()
+            self.agent.join(timeout=2.0) 
+            print(f"Agent for cell {self.cell_id} stopped")
             
         if self.rpc_server:
             threading.Thread(target=self.rpc_server.shutdown, daemon=True).start()
         
         return "Shutting down..."
     
-    def add_agent(self, agent_name):
-        """Adds a new agent to the cell"""
-        if agent_name in self.agents:
-            return f"Agent {agent_name} already exists"
-        
-        agent = Agent(self.cell_id, self.sim.thread_manager)
-        
-        self.agents[agent_name] = agent
-        
-        if not agent.is_alive():
-            agent.start()
-            return f"Agent {agent_name} added and started successfully"
-        else:
-            return f"Agent {agent_name} is already running"          
-    
-    def stop_agent(self, agent_name):
-        """Stops an agent in the cell."""
-        
-        if agent_name not in self.agents:
-            return f"Agent {agent_name} does not exist"
-        
-        agent = self.agents[agent_name]
-        
-        if agent.is_alive():
-            agent.stop()
-            agent.join(timeout=2.0)
-            
-        del self.agents[agent_name]
-        return f'Agent {agent_name} stopped and removed successfully'
-    
-    def list_agents(self):
-        """Lists all available agents"""
-        if not self.agents:
-            return "No agents available"
-        
-        results = []
-        for name, agent in self.agents.items():
-            status = "running" if agent.is_alive() else "stopped"
-            results.append(f"Agent {name}: {status}")
-            
-        return ", ".join(results)
-    
-    def agent_status(self, agent_name):
-        """Get status of an agent"""
-        if agent_name not in self.agents:
-            return f"Agent {agent_name} does not exist"
-        
-        agent = self.agents[agent_name]
-        
-        return f"Agent {agent_name}: running" if agent.is_alive() else f"Agent {agent_name}: stopped"
-        
     def get_metrics(self):
         """Get real-time metrics from the cell"""
         try:
@@ -240,7 +195,7 @@ class Cell:
                 'cell_id': self.cell_id,
                 'uptime': time.time() - getattr(self, 'start_time', time.time()),
                 'ports': {},
-                'agents': {}
+                'agent': {}
             }
             
             # Port metrics - only return serializable data
@@ -268,46 +223,45 @@ class Cell:
                 metrics['ports'][port_id] = port_info
             
             # Agent metrics - only return serializable data
-            for agent_name, agent in self.agents.items():
-                if agent.is_alive():
-                    try:
-                        snapshot = agent.get_snapshot()
-                        
-                        # Convert trees to simple dict
-                        trees_info = {}
-                        for tree_id, tree_data in snapshot.get('trees', {}).items():
-                            if hasattr(tree_data, 'to_dict'):
-                                trees_info[tree_id] = tree_data.to_dict()
-                            else:
-                                trees_info[tree_id] = str(tree_data)
-                        
-                        # Convert port_paths to simple dict
-                        port_paths_info = {}
-                        for path_id, path_data in snapshot.get('port_paths', {}).items():
-                            if hasattr(path_data, 'serialize'):
-                                try:
-                                    port_paths_info[path_id] = path_data.serialize()
-                                except:
-                                    port_paths_info[path_id] = str(path_data)
-                            else:
+            if hasattr(self, 'agent') and self.agent.is_alive():
+                try:
+                    snapshot = self.agent.get_snapshot()
+                    
+                    trees_info = {}
+                    for tree_id, tree_data in snapshot.get('trees', {}).items():
+                        if hasattr(tree_data, 'to_dict'):
+                            trees_info[tree_id] = tree_data.to_dict()
+                        else:
+                            trees_info[tree_id] = str(tree_data)
+                            
+                            
+                    port_paths_info = {}
+                    for path_id, path_data in snapshot.get('port_paths', {}).items():
+                        if hasattr(path_data, 'serialize'):
+                            try:
+                                port_paths_info[path_id] = path_data.serialize()
+                            except:
                                 port_paths_info[path_id] = str(path_data)
-                        
-                        metrics['agents'][agent_name] = {
-                            'status': 'running',
-                            'trees_count': len(trees_info),
-                            'trees': trees_info,
-                            'node_id': str(snapshot.get('node_id', '')),
-                            'port_paths': port_paths_info
-                        }
-                    except Exception as e:
-                        metrics['agents'][agent_name] = {
+                        else:
+                            port_paths_info[path_id] = str(path_data)
+                            
+                    metrics['agent'] = {
+                        'status': 'running',
+                        'trees_count': len(trees_info),
+                        'trees': trees_info,
+                        'node_id': str(snapshot.get('node_id', '')),
+                        'port_paths': port_paths_info
+                    }
+           
+                except Exception as e:
+                        metrics['agent'] = {
                             'status': 'running',
                             'error': str(e)
                         }
                 else:
-                    metrics['agents'][agent_name] = {'status': 'stopped'}
+                    metrics['agent'] = {'status': 'stopped'}
             
-            return metrics
+                return metrics
             
         except Exception as e:
             return {'error': str(e), 'cell_id': self.cell_id}
