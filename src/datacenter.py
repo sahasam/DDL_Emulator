@@ -5,6 +5,7 @@ import time
 import tempfile
 import os
 import traceback
+import yaml
 
 class ProtoDatacenter:
     def __init__(self):
@@ -203,11 +204,103 @@ class ProtoDatacenter:
             print(f"Fault cleared in cell {cell_id}: {result}")
         except Exception as e:
             print(f"Failed to clear fault in cell {cell_id}: {e}")
+
             
-def main():
-    dc = ProtoDatacenter()
+    def load_topology(self, topology_file):
+        try:
+            with open(topology_file, 'r') as f:
+                config = yaml.safe_load(f)
+            
+            topology = config['topology']
+            
+            print('--- Creating Cells ---')
+            for cell_config in topology.get('cells', []):
+                cell_id = cell_config['id']
+                rpc_port = cell_config['rpc_port']
+                
+                print(f"Creating cell {cell_id} on port {rpc_port}")
+                success = self.add_cell(cell_id, rpc_port)
+                if not success:
+                    print(f"Failed to create cell {cell_id} on port {rpc_port}")
+                    return False
+                
+                #TODO: ADD SLEEP DURING TESTING
+                
+            print('--- Creating Links ---')
+            for link_index, link_config in enumerate(topology.get('links', [])):
+                success = self._configure_link_from_config(link_config, link_index)
+                if not success:
+                    print(f"Failed to create link {link_index} from config")
+                    return False
+                
+                #TODO: ADD SLEEP
+                
+            print('--- Topology Loaded Successfully ---')
+            return True
     
-    print("Simple Datacenter Controller")
+        except Exception as e:
+            print(f"Failed to load topology from {topology_file}: {e}")
+            traceback.print_exc()
+            return False
+                
+                
+    
+    def _configure_link_from_config(self, link_config, link_index):
+        """Create links based on transport type"""
+        
+        cell1 = link_config['cell1']
+        port1 = link_config['port1']
+        cell2 = link_config['cell2']
+        port2 = link_config['port2']
+        
+        transport = link_config.get('transport', 'udp')
+        config = link_config.get('config', {})
+        
+        print(f'Creating {transport} link {link_index} between {cell1}:{port1} and {cell2}:{port2}')
+        
+        if transport == 'udp':
+            return self._configure_udp_link(cell1, port1, cell2, port2, config, link_index)
+        elif transport == 'interface':
+            return self._configure_interface_link(cell1, port1, cell2, port2, config, link_index)
+        else:
+            print(f"Unsupported transport type: {transport}")
+            return False
+        
+        
+    def _configure_udp_link(self, cell1, port1, cell2, port2, config, link_index):
+        """Create a udp link between two cells"""
+        
+        if 'addr1' in config and 'addr2' in config:
+            addr1 = config['addr1']
+            addr2 = config['addr2']
+        else: 
+            base_port = 5000 + link_index * 2
+            addr1 = f'127.0.0.1:{base_port}:{base_port + 1}'
+            addr2 = f'127.0.0.1:{base_port+1}:{base_port}'
+            
+        return self.create_link(cell1, port1, cell2, port2, addr1, addr2)
+    
+    def _configure_interface_link(self, cell1, port1, cell2, port2, config, link_index):
+        """Create a network interface link"""
+        interface1 = config.get('interface1', f'en0')
+        interface2 = config.get('interface2', f'en1')
+        
+        try:
+            config1 = {"interface": interface1}
+            result1 = self.cells[cell1].bind_port(port1, config1)
+            print(f"Cell {cell1} bind result: {result1}")
+            
+            config2 = {"interface": interface2}
+            result2 = self.cells[cell2].bind_port(port2, config2)
+            print(f"Cell {cell2} bind result: {result2}")
+            
+            return True
+        except Exception as e:
+            print(f"Failed to create interface link between {cell1} and {cell2}: {e}")
+            return False
+        
+def help():
+    print("Datacenter Controller")
     print("Commands:")
     print("  add <cell_id> <rpc_port>")
     print("  remove <cell_id>")
@@ -217,8 +310,19 @@ def main():
     print("  port <cell_id> <port_name>")
     print("  logs <cell_id>")
     print("  get_metrics <cell_id>")
+    print("  inject_fault <cell_id> <port_name> <fault_type> [<args>]")
+    print("      fault_type: drop|delay|disconnect")
+    print("  clear_fault <cell_id> <port_name>")
+    print("  load_topology <topology_file>")
+    print("  teardown <cell_id>")
     print("  cleanup")
     print("  quit")
+    
+            
+def main():
+    dc = ProtoDatacenter()
+    
+    help()
     
     while True:
         try:
@@ -297,6 +401,17 @@ def main():
             elif cmd[0] == 'clear_fault' and len(cmd) == 3:
                 cell_id, port_name = cmd[1:]
                 dc.clear_fault(cell_id, port_name)
+            
+            elif cmd[0] == 'load_topology' and len(cmd) == 2:
+                topology_file = cmd[1]
+                dc.load_topology(topology_file)
+            
+            elif cmd[0] == 'teardown':
+                for cell_id in list(dc.cells.keys()):
+                    dc.remove_cell(cell_id)
+            
+            elif cmd[0] == 'help':
+                help()
             
             
             else:
