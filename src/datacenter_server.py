@@ -123,7 +123,7 @@ class DataCenterServer:
                 cell_id = params.get('cell_id')
                 
                 if cell_id in self.dc.cells:
-                    metrics = self.dc.cells[cell_id].get_metrics()  # Fixed: was self.cells
+                    metrics = self.dc.cells[cell_id].get_metrics()  
                     return {'success': True, 'data': metrics}
                 else:
                     return {'success': False, 'message': f'Cell {cell_id} not found.'}
@@ -137,7 +137,7 @@ class DataCenterServer:
                     'message': result
                 }
 
-            elif command == 'clear_fault':  # Fixed: was clear_faults
+            elif command == 'clear_fault':  
                 result = self.dc.cells[params['cell_id']].clear_fault(params['port_name'])
                 return {
                     'success': True,
@@ -174,7 +174,59 @@ class DataCenterServer:
                     self.dc.remove_cell(cell_id)
                         
                 return {'success': True, 'message': 'All cells removed successfully.'}
+            
+            elif command == 'upload_topology':
+                try:
+                    filename = params['filename']
+                    content = params['content']
+                    
+                    import tempfile
+                    import os
+                    
+                    temp_dir = tempfile.gettempdir()
+                    file_path = os.path.join(temp_dir, f'uploaded_{filename}')
+
+                    with open(file_path, 'w') as f:
+                        f.write(content)
+                        
+                    success = self.dc.upload_topology(file_path)
+                    
+                    os.remove(file_path)  # Clean up the temporary file
+                    
+                    return {
+                        'success': success,
+                        'message': 'Topology uploaded successfully.' if success else 'Failed to upload topology.'
+
+                    }
+                except Exception as e:
+                    return {'success': False, 'message': f'Error uploading topology: {str(e)}'}
                 
+            elif command == 'save_topology':
+                try:
+                    filename = params.get('filename', 'topology.yaml')
+                    
+                    # Generate current topology
+                    topology = {
+                        'topology': {
+                            'cells': [
+                                {'id': cell_id, 'rpc_port': 'unknown'} 
+                                for cell_id in self.dc.cells.keys()
+                            ],
+                            'links': []  # You'd need to track these
+                        }
+                    }
+                    
+                    import yaml
+                    yaml_content = yaml.dump(topology, default_flow_style=False)
+                    
+                    return {
+                        'success': True,
+                        'data': yaml_content,
+                        'filename': filename
+                    }
+                    
+                except Exception as e:
+                    return {'success': False, 'message': f'Save failed: {str(e)}'}
             else:
                 return {'success': False, 'message': f'Unknown command: {command}'}
             
