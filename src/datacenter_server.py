@@ -1,6 +1,6 @@
 import asyncio
 import json
-import websockets
+import websockets.server
 from datacenter import ProtoDatacenter
 from typing import Set
 import threading
@@ -11,7 +11,7 @@ class DataCenterServer:
         self.host = host
         self.port = port
         self.dc = ProtoDatacenter()
-        self.websocket_clients: Set[websockets.WebSocketServerProtocol] = set()
+        self.websocket_clients: Set = set()
         
     def start(self):
         def run_server():
@@ -29,6 +29,8 @@ class DataCenterServer:
                         
                 except websockets.exceptions.ConnectionClosed:
                     print(f'Client disconnected: {websocket.remote_address}')
+                except Exception as e:
+                    print(f'Error handling client: {e}')
                     
                 finally:
                     self.websocket_clients.discard(websocket)
@@ -36,7 +38,13 @@ class DataCenterServer:
             
             async def start_server_async():
                 # Start the WebSocket server
-                server = await websockets.serve(handle_client, self.host, self.port)
+                server = await websockets.server.serve(
+                    handle_client, 
+                    self.host, 
+                    self.port,
+                    ping_interval=None,  # Disable ping
+                    ping_timeout=None    # Disable ping timeout
+                )
                 print(f'WebSocket server started on ws://{self.host}:{self.port}')
                 
                 # Start periodic updates in the same event loop
@@ -46,7 +54,12 @@ class DataCenterServer:
                 await server.wait_closed()
             
             # Run the async function
-            loop.run_until_complete(start_server_async())
+            try:
+                loop.run_until_complete(start_server_async())
+            except KeyboardInterrupt:
+                print("Server interrupted")
+            finally:
+                loop.close()
             
         server_thread = threading.Thread(target=run_server, daemon=True)
         server_thread.start()
@@ -74,7 +87,10 @@ class DataCenterServer:
                 'type': 'error',
                 'message': str(e),
             }
-            await websocket.send(json.dumps(error_response))
+            try:
+                await websocket.send(json.dumps(error_response))
+            except:
+                print(f"Failed to send error response: {e}")
     
     async def execute_command(self, command, params):
         """Executes a datacenter command and return results"""
@@ -82,21 +98,16 @@ class DataCenterServer:
             if command == 'add_cell':
                 cell_id = params['cell_id']
                 rpc_port = params.get('rpc_port', None)
-                success = self.dc.add_cell(cell_id, rpc_port)
+                host = params.get('host', 'localhost')
+                result = self.dc.add_cell(cell_id, rpc_port, host)
                 
-                return {
-                    'success': success,
-                    'message': f'Cell {cell_id} added successfully.' if success else 'Failed to add cell.'
-                }
+                return result
                 
             elif command == 'remove_cell':
                 cell_id = params['cell_id']
-                self.dc.remove_cell(cell_id)  # remove_cell doesn't return success
+                result = self.dc.remove_cell(cell_id)
                 
-                return {
-                    'success': True,
-                    'message': f'Cell {cell_id} removed successfully.'
-                }
+                return result
             
             elif command == 'create_link':
                 result = self.dc.create_link(
@@ -104,10 +115,7 @@ class DataCenterServer:
                     params['cell2'], params['port2'],
                     params['addr1'], params['addr2']
                 )
-                return {
-                    'success': result,
-                    'message': 'Link created successfully.' if result else 'Failed to create link.'
-                }
+                return result
                 
             elif command == 'get_status':
                 status = {}
@@ -123,47 +131,44 @@ class DataCenterServer:
                 cell_id = params.get('cell_id')
                 
                 if cell_id in self.dc.cells:
-                    metrics = self.dc.cells[cell_id].get_metrics()  
-                    return {'success': True, 'data': metrics}
+                    try:
+                        metrics = self.dc.cells[cell_id].get_metrics()  
+                        return metrics
+                    except Exception as e:
+                        return {'success': False, 'message': f'Failed to get metrics: {str(e)}'}
                 else:
                     return {'success': False, 'message': f'Cell {cell_id} not found.'}
                 
             elif command == 'inject_fault':
-                result = self.dc.cells[params['cell_id']].inject_fault(
-                    params['port_name'], params['fault_type'], params.get('fault_params', {})
-                )
-                return {
-                    'success': True,
-                    'message': result
-                }
+                try:
+                    result = self.dc.cells[params['cell_id']].inject_fault(
+                        params['port_name'], params['fault_type'], params.get('fault_params', {})
+                    )
+                    return result
+                except Exception as e:
+                    return {'success': False, 'message': f'Fault injection failed: {str(e)}'}
 
             elif command == 'clear_fault':  
-                result = self.dc.cells[params['cell_id']].clear_fault(params['port_name'])
-                return {
-                    'success': True,
-                    'message': result
-                }
+                try:
+                    result = self.dc.cells[params['cell_id']].clear_fault(params['port_name'])
+                    return result
+                except Exception as e:
+                    return {'success': False, 'message': f'Clear fault failed: {str(e)}'}
             
             elif command == 'get_topology':
-                topology = {
-                    'cells': list(self.dc.cells.keys()),
-                    'links': []  # TODO: track links
-                }
-                return {'success': True, 'data': topology}
+                result = self.dc.get_topology_status()
+                return result
 
             elif command == 'unlink':
                 result = self.dc.unlink(
                     params['cell1'], params['port1'],
                     params['cell2'], params['port2']
                 )
-                return {
-                    'success': result, 
-                    'message': 'Link unlinked successfully.' if result else 'Failed to unlink.'
-                }
+                return result
                 
             elif command == 'get_logs':
                 cell_id = params['cell_id']
-                self.dc.get_logs(cell_id)  # This prints to console, doesn't return data
+                self.dc.get_logs(cell_id) 
                 return {
                     'success': True, 
                     'message': f'Logs for {cell_id} printed to server console'
@@ -189,14 +194,13 @@ class DataCenterServer:
                     with open(file_path, 'w') as f:
                         f.write(content)
                         
-                    success = self.dc.upload_topology(file_path)
+                    success = self.dc.load_topology(file_path)  # Changed from upload_topology
                     
                     os.remove(file_path)  # Clean up the temporary file
                     
                     return {
-                        'success': success,
-                        'message': 'Topology uploaded successfully.' if success else 'Failed to upload topology.'
-
+                        'success': success.get('success', False) if isinstance(success, dict) else success,
+                        'message': success.get('message', 'Topology uploaded successfully.') if isinstance(success, dict) else ('Topology uploaded successfully.' if success else 'Failed to upload topology.')
                     }
                 except Exception as e:
                     return {'success': False, 'message': f'Error uploading topology: {str(e)}'}
@@ -244,10 +248,13 @@ class DataCenterServer:
         }
 
         disconnected = set()
-        for client in self.websocket_clients:
+        for client in list(self.websocket_clients):  # Create a copy to iterate over
             try:
                 await client.send(json.dumps(message))
             except websockets.exceptions.ConnectionClosed:
+                disconnected.add(client)
+            except Exception as e:
+                print(f"Error broadcasting to client: {e}")
                 disconnected.add(client)
                 
         self.websocket_clients -= disconnected
@@ -259,7 +266,7 @@ class DataCenterServer:
                 all_metrics = {}
                 for cell_id, proxy in self.dc.cells.items():
                     try:
-                        metrics = proxy.get_metrics()  # Removed await - this is synchronous
+                        metrics = proxy.get_metrics()
                         all_metrics[cell_id] = metrics
                     except Exception as e:
                         all_metrics[cell_id] = {'error': 'unreachable'}
