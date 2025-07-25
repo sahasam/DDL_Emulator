@@ -405,9 +405,9 @@ class ProtoDatacenter:
         host1 = self.cell_locations.get(cell1)
         host2 = self.cell_locations.get(cell2)
         
-        if host1 != host2:
-            print(f"ERROR: UDP links only work between cells on the same host. {cell1} is on {host1}, {cell2} is on {host2}")
-            return False
+        # if host1 != host2:
+        #     print(f"ERROR: UDP links only work between cells on the same host. {cell1} is on {host1}, {cell2} is on {host2}")
+        #     return False
         
         if 'addr1' in config and 'addr2' in config:
             addr1 = config['addr1']

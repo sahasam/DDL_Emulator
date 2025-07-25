@@ -305,6 +305,7 @@ def main():
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
+        server.teardown_all_cells()
         print("\nShutting down server...")
         print("Server shutdown complete.")
        
