@@ -308,6 +308,7 @@ class ProtoDatacenter:
             return {'success': False, 'message': f'Cell {cell_id} is not connected.'}
         
         try:
+            print(f"Injecting fault '{fault_type}' into cell {cell_id} on port {port_name} with args: {kwargs}")
             result = self.cells[cell_id].inject_fault(port_name, fault_type, kwargs)
             host = self.cell_locations.get(cell_id, "unknown")
             print(f"Fault injected into cell {cell_id} ({host}): {result}")

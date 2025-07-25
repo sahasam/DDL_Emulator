@@ -13,6 +13,12 @@ class DataCenterServer:
         self.dc = ProtoDatacenter()
         self.websocket_clients: Set = set()
         
+    def __del__(self):
+        """Destructor to ensure proper cleanup"""
+        print("DataCenterServer is being deleted. Cleaning up...")
+        self.teardown_all_cells()
+        print("All cells removed successfully.")
+        
     def start(self):
         def run_server():
             loop = asyncio.new_event_loop()
@@ -141,16 +147,16 @@ class DataCenterServer:
                 
             elif command == 'inject_fault':
                 try:
-                    result = self.dc.cells[params['cell_id']].inject_fault(
-                        params['port_name'], params['fault_type'], params.get('fault_params', {})
-                    )
+                    fault_params = params.get('fault_params', {})
+                    result = self.dc.inject_fault(params['cell_id'], params['port_name'], params['fault_type'], **fault_params)
                     return result
                 except Exception as e:
                     return {'success': False, 'message': f'Fault injection failed: {str(e)}'}
 
             elif command == 'clear_fault':  
                 try:
-                    result = self.dc.cells[params['cell_id']].clear_fault(params['port_name'])
+                    result = self.dc.clear_fault(params['cell_id'], params['port_name'])
+                    
                     return result
                 except Exception as e:
                     return {'success': False, 'message': f'Clear fault failed: {str(e)}'}
@@ -236,6 +242,14 @@ class DataCenterServer:
             
         except Exception as e:
             return {'success': False, 'message': str(e)}
+
+    def teardown_all_cells(self):
+        try:
+            for cell_id in list(self.dc.cells.keys()):
+                self.dc.remove_cell(cell_id)
+                
+        except Exception as e:
+            print(f"Error during teardown: {e}")
         
     async def broadcast_update(self, update_type, data):
         if not self.websocket_clients:

@@ -234,8 +234,24 @@ class Cell:
                             'bytes_sent': stats.get('bytes_sent', 0),
                             'bytes_received': stats.get('bytes_received', 0),
                             'events': stats.get('events', 0),
-                            'round_trip_latency': stats.get('round_trip_latency', 0)
+                            'round_trip_latency': stats.get('round_trip_latency', 0),
+                            # ADD FAULT INJECTION STATISTICS FROM PROTOCOL
+                            'packets_dropped_in': stats.get('packets_dropped_in', 0),
+                            'packets_dropped_out': stats.get('packets_dropped_out', 0),
+                            'packets_delayed_in': stats.get('packets_delayed_in', 0),
+                            'packets_delayed_out': stats.get('packets_delayed_out', 0)
                         })
+                    
+                    # Get extended protocol statistics if this is EthernetProtocolExtended
+                    if hasattr(protocol, 'get_link_status'):
+                        try:
+                            link_status = protocol.get_link_status()
+                            if 'statistics' in link_status:
+                                extended_stats = link_status['statistics']
+                                # Merge extended statistics
+                                port_info.update(extended_stats)
+                        except Exception as e:
+                            print(f"Error getting extended link status: {e}")
                     
                     # Get queue lengths (important for debugging)
                     if hasattr(port, 'io'):
@@ -245,13 +261,22 @@ class Cell:
                             'signal_queue_size': port.io.signal_q.qsize() if hasattr(port.io.signal_q, 'qsize') else 0
                         })
                     
-                    # Get fault injector status
+                    # Get fault injector status from PORT (this shows the configuration)
                     if hasattr(port, 'faultInjector') and port.faultInjector:
                         fault_state = port.faultInjector.get_state()
                         port_info['fault_injection'] = {
                             'active': fault_state.is_active,
                             'drop_rate': fault_state.drop_rate,
                             'delay_ms': fault_state.delay_ms
+                        }
+                    
+                    # ALSO get fault injector status from PROTOCOL (this shows the actual impact)
+                    if hasattr(protocol, 'faultInjector') and protocol.faultInjector:
+                        protocol_fault_state = protocol.faultInjector.get_state()
+                        port_info['protocol_fault_injection'] = {
+                            'active': protocol_fault_state.is_active,
+                            'drop_rate': protocol_fault_state.drop_rate,
+                            'delay_ms': protocol_fault_state.delay_ms
                         }
                     
                     # Get neighbor information
@@ -324,13 +349,14 @@ class Cell:
             
             if fault_type == 'drop':
                 drop_rate = params.get('drop_rate', 0.1)
-                fault_state = FaultState(is_active=True, drop_rate=drop_rate, delay_ms=0)
+                fault_state = FaultState(is_active=True, drop_rate=drop_rate, delay_ms=port.faultInjector._state.delay_ms)
                 port.faultInjector.update_state(fault_state)
+                
                 return f"Injecting {drop_rate * 100}% drop fault on port {port_name}"
             
             elif fault_type == 'delay':
                 delay_ms = params.get('delay_ms', 100)
-                fault_state = FaultState(is_active=True, drop_rate=0.0, delay_ms=delay_ms)
+                fault_state = FaultState(is_active=True, drop_rate=port.faultInjector._state.drop_rate, delay_ms=delay_ms)
                 port.faultInjector.update_state(fault_state)
                 return f"Injecting {delay_ms}ms delay fault on port {port_name}"
             

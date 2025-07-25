@@ -42,8 +42,7 @@ class LinkProtocol(asyncio.DatagramProtocol):
 
         self.link_state = self.LinkState.DISCONNECTED
         self.disconnected_future = asyncio.Future()
-        self.transport = None
-
+        self.transport = self._last_received = 0.0
     def connection_made(self, transport):
         self.transport = transport
 

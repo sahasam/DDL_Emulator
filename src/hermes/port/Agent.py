@@ -67,6 +67,11 @@ class Agent(threading.Thread):
         self.logger.info("Agent started")
         while not self.stop_event.is_set():
             ports = self.thread_manager.get_ports()
+            
+            total_signals = sum(not port.io.signal_q.empty() for port in ports.values())
+            if total_signals > 0:
+                self.logger.info(f"Agent -- Processing {total_signals} signals from ports")
+
             for portid, port in ports.items():
                 if not port.io.signal_q.empty():
                     signal = port.io.signal_q.get()
@@ -143,7 +148,11 @@ class Agent(threading.Thread):
                         tba_packet = TreeBuildAck.from_bytes(data)
                         if tba_packet.tree_id == port.port_id and tba_packet.tree_instance_id == port.tree_instance_id:
                             self.logger.info(f"{port.name} -- Received TREE_BUILD_ACK for own tree: {tba_packet.tree_id}/{tba_packet.tree_instance_id} -- {tba_packet.hops} hops -- {tba_packet.path}")
-                            self.port_paths[portid].accumulate_path(tba_packet.path)
+                            if portid in self.port_paths:
+                                self.port_paths[portid].accumulate_path(tba_packet.path)
+                            else:
+                                self.logger.warning(f"Missing port_paths entry for {portid}")
+
                         elif tba_packet.tree_id == port.port_id and tba_packet.tree_instance_id != port.tree_instance_id:
                             self.logger.info(f"{port.name} -- Received TREE_BUILD_ACK for known tree: {tba_packet.tree_id}, but with different instance id. Ignoring.")
                         else:

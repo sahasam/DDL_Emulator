@@ -55,6 +55,8 @@ class CellManagerServer:
             cell_list.append(f"Cell ID: {cell_id}, PID: {process.pid}")
         
         return "\n".join(cell_list)
+
+        
     
     
 if __name__ == "__main__":
