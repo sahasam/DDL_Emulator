@@ -42,8 +42,7 @@ class LinkProtocol(asyncio.DatagramProtocol):
 
         self.link_state = self.LinkState.DISCONNECTED
         self.disconnected_future = asyncio.Future()
-        self.transport = None
-
+        self.transport = self._last_received = 0.0
     def connection_made(self, transport):
         self.transport = transport
 
@@ -146,9 +145,11 @@ class LinkProtocol(asyncio.DatagramProtocol):
             self.logger.error(f"Datagram Processing failed: {e}", exc_info=True)
       
     def connection_lost(self, exc):
-        self.logger.info("Connection lost")
+        self.logger.info(f"Connection lost: {exc}")
         self.link_state = self.LinkState.DISCONNECTED
-        self.disconnected_future.set_result(None)
+
+        if not self.disconnected_future.done():
+            self.disconnected_future.set_result(None)
         if self._ping_alive_task:
             self._ping_alive_task.cancel()
         if self._timeout_task:

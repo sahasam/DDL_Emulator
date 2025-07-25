@@ -56,6 +56,7 @@ class Agent(threading.Thread):
         self.node_id = node_id
         self.trees = {}
         self.port_paths = {}
+        self.stop_event = threading.Event()
 
     def _broadcast_tree_build(self, exclude_portid: str, tb_packet: TreeBuild):
         for portid, port in self.thread_manager.get_ports().items():
@@ -64,13 +65,18 @@ class Agent(threading.Thread):
 
     def run(self):
         self.logger.info("Agent started")
-        while True:
+        while not self.stop_event.is_set():
             ports = self.thread_manager.get_ports()
+            
+            total_signals = sum(not port.io.signal_q.empty() for port in ports.values())
+            if total_signals > 0:
+                self.logger.info(f"Agent -- Processing {total_signals} signals from ports")
+
             for portid, port in ports.items():
                 if not port.io.signal_q.empty():
                     signal = port.io.signal_q.get()
                     self.logger.info(f"{port.name} -- Received signal: {signal}")
-                    if signal == b"CONNECTED": # Initiate a TREE_BUILD
+                    if signal == b"CONNECTED":
                         self.logger.info(f"{port.name} -- Sending TREE_BUILD")
                         port.tree_instance_id = uuid.uuid4().hex
                         tb_packet = TreeBuild(
@@ -78,8 +84,11 @@ class Agent(threading.Thread):
                             tree_instance_id=port.tree_instance_id,
                             hops=0,
                         )
+                        # FIX: Ensure port_paths entry is created BEFORE sending packet
                         self.port_paths[portid] = PathTree(port.port_id, port.tree_instance_id)
                         port.io.write_q.put(tb_packet.to_bytes())
+                        
+                        # Also send existing trees to new port
                         for tree_id, tree in self.trees.items():
                             tb_packet = TreeBuild(
                                 tree_id=tree_id,
@@ -138,19 +147,30 @@ class Agent(threading.Thread):
                         elif portid == self.trees[tb_packet.tree_id].rootward_portid:
                             self.logger.info(f"{port.name} -- Received TREE_BUILD for known tree: {tb_packet.tree_id}. Ignoring.")
                     
+                    # In Agent.run(), TREE_BUILD_ACK handling section:
                     elif data.startswith(b"TREE_BUILD_ACK "):
                         tba_packet = TreeBuildAck.from_bytes(data)
+                        
                         if tba_packet.tree_id == port.port_id and tba_packet.tree_instance_id == port.tree_instance_id:
                             self.logger.info(f"{port.name} -- Received TREE_BUILD_ACK for own tree: {tba_packet.tree_id}/{tba_packet.tree_instance_id} -- {tba_packet.hops} hops -- {tba_packet.path}")
-                            self.port_paths[portid].accumulate_path(tba_packet.path)
+                            if portid in self.port_paths:
+                                self.port_paths[portid].accumulate_path(tba_packet.path)
+                            else:
+                                self.logger.warning(f"Missing port_paths entry for {portid}")
+                                
                         elif tba_packet.tree_id == port.port_id and tba_packet.tree_instance_id != port.tree_instance_id:
                             self.logger.info(f"{port.name} -- Received TREE_BUILD_ACK for known tree: {tba_packet.tree_id}, but with different instance id. Ignoring.")
+                            
                         else:
-                            self.logger.info(f"{port.name} -- Forwarding TREE_BUILD_ACK for other tree: {tba_packet.tree_id}")
-                            self.trees[tba_packet.tree_id].leafward_portids.append(portid)
-                            rootward_port = ports[self.trees[tba_packet.tree_id].rootward_portid]
-                            tba_packet.path = [portid] + tba_packet.path
-                            rootward_port.io.write_q.put(tba_packet.to_bytes())
+                            if tba_packet.tree_id in self.trees:
+                                self.logger.info(f"{port.name} -- Forwarding TREE_BUILD_ACK for other tree: {tba_packet.tree_id}")
+                                self.trees[tba_packet.tree_id].leafward_portids.append(portid)
+                                rootward_port = ports[self.trees[tba_packet.tree_id].rootward_portid]
+                                tba_packet.path = [portid] + tba_packet.path
+                                rootward_port.io.write_q.put(tba_packet.to_bytes())
+                            else:
+                                # Tree was deleted (invalidated) while ACK was in flight
+                                self.logger.debug(f"{port.name} -- Received TREE_BUILD_ACK for deleted tree: {tba_packet.tree_id}")
                     
                     elif data.startswith(b"TREE_BUILD_INVALIDATION "):
                         tb_invalidation_packet = TreeBuildInvalidation.from_bytes(data)
@@ -168,6 +188,12 @@ class Agent(threading.Thread):
                             self.logger.info(f"{port.name} -- Received RTP for unknown tree: {rtp_packet.tree_id}")
 
             time.sleep(0.01) # unlock the GIL
+            
+    def stop(self):
+        """Stop the agent thread"""
+        self.logger.info("Stopping Agent")
+        self.stop_event.set()
+        self.join()
 
     def get_snapshot(self):
         """Get a JSON-serializable snapshot of the agent state"""

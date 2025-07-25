@@ -1,0 +1,14 @@
+config:
+  protocol: tree
+  web_socket_port: 6363
+  log_dir: /opt/hermes/logs
+  log_level:
+    websocket_server: info
+    alice: info
+    charlie: info
+  node_id: testing
+ports:
+  - name: en1
+    interface: "127.0.0.1:8002:8001"  
+  - name: en2
+    interface: "127.0.0.1:8004:8003"  
