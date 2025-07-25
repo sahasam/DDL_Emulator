@@ -15,14 +15,14 @@ from hermes.port.Agent import Agent
 from hermes.faults.FaultInjector import FaultState
 
 class Cell:
-    def __init__(self, cell_id, rpc_port):
+    def __init__(self, cell_id, rpc_port, bind_addr="localhost"):
         self.cell_id = cell_id
         self.rpc_port = rpc_port
         self.sim = None
         self.rpc_server = None
         self.running = False
         self.port_queues = {}
-        
+        self.bind_addr = bind_addr
         
     def start(self):
         """Start the cell with XML-RPC server."""
@@ -51,7 +51,7 @@ class Cell:
         
         def run_server():
             self.running = True
-            self.rpc_server = SimpleXMLRPCServer(("localhost", self.rpc_port), allow_none=True, logRequests=False)
+            self.rpc_server = SimpleXMLRPCServer((self.bind_addr, self.rpc_port), allow_none=True, logRequests=False)
             
             self.rpc_server.register_function(self.bind_port, "bind_port")
             self.rpc_server.register_function(self.unbind_port, "unbind_port")
@@ -401,10 +401,12 @@ def main():
     parser = argparse.ArgumentParser(description='Network Cell')
     parser.add_argument('--cell-id', required=True, help='Unique cell identifier')
     parser.add_argument('--rpc-port', type=int, required=True, help='XML-RPC port')
+    parser.add_argument('--bind-addr', default="localhost", help='Address to bind XML-RPC server (default: localhost)')
+
     
     args = parser.parse_args()
 
-    cell = Cell(args.cell_id, args.rpc_port)
+    cell = Cell(args.cell_id, args.rpc_port, args.bind_addr)
     cell.start()
         
 if __name__ == "__main__":

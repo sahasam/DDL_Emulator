@@ -102,7 +102,7 @@ class ProtoDatacenter:
             return {'success': True, 'message': f'Cell {cell_id} added successfully on {host}.'}
         
         except Exception as e:
-            print(f"Failed to create local ")
+            print(f"Failed to create local " f'cell {cell_id} on {host} at port {rpc_port}: {e}')
         
     def add_cell(self, cell_id: str, rpc_port: int, host="localhost") -> dict:
         """Connects to a cell"""
