@@ -145,7 +145,7 @@ class LinkProtocol(asyncio.DatagramProtocol):
             self.logger.error(f"Datagram Processing failed: {e}", exc_info=True)
       
     def connection_lost(self, exc):
-        self.logger.info("Connection lost")
+        self.logger.info(f"Connection lost: {exc}")
         self.link_state = self.LinkState.DISCONNECTED
 
         if not self.disconnected_future.done():

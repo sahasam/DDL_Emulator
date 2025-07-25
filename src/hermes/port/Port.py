@@ -40,6 +40,8 @@ class BasePort(threading.Thread):
 
         self.protocol_instance = None
         self.daemon = True
+        self._disconnected = False
+        self._disconnect_lock = threading.Lock()
     
     def run(self):
         """Main loop for the port thread."""
@@ -79,40 +81,7 @@ class BasePort(threading.Thread):
             
             self._loop.run_until_complete(gather_cancelled())
             self._loop.close()
-    # def run(self):
-    #     """
-    #     Main loop for the port thread.
-    #     """
-    #     self.logger.info(f"Starting UDP port thread for {self.name}")
-    #     asyncio.set_event_loop(self._loop)
-        
-    #     try:
-    #         # Create tasks explicitly
-    #         run_link_task = self._loop.create_task(self.run_link())
-
-    #         while not self.stop_event.is_set():
-    #             try:
-    #                 # Wait for either task to complete
-    #                 self._loop.run_until_complete(
-    #                     asyncio.wait_for(
-    #                         self.stop_event.wait(),
-    #                         timeout=None
-    #                     )
-    #                 )
-    #             except asyncio.TimeoutError:
-    #                 continue
-    #             except Exception as e:
-    #                 self.logger.error(f"Error in port thread {self.port_id}: {e}")
-    #                 continue
-            
-    #         # Close any open transport
-    #         run_link_task.cancel()
-                
-    #     except Exception as e:
-    #         self.logger.error(f"Error in port thread {self.port_id}: {e}")
-    #     finally:
-    #         self.logger.info(f"Shutting down UDP port thread for {self.port_id}")
-    #         self._loop.close()
+    
     
     async def run_link(self):
         raise NotImplementedError("Subclasses must implement run_link")
@@ -170,6 +139,11 @@ class UDPPort(BasePort):
     async def wait_for_connection(self) -> Tuple[bool, Optional[IPV6_ADDR], Optional[IPV6_ADDR]]:
         try:
             while True:
+                if self.is_disconnected():
+                    self.logger.info(f"Port {self.port_id} is disconnected, waiting for reconnection")
+                    await asyncio.sleep(1)
+                    continue
+                
                 if self.is_virtual:
                     # For virtual connections, use the configured ports
                     local_addr = (self.host, self.local_port)
@@ -293,3 +267,20 @@ class UDPPort(BasePort):
                 "status": self.protocol_instance.link_state.value,
             }
         }
+        
+    def set_disconnected(self, disconnected):
+        with self._disconnect_lock:
+            old_state = self._disconnected
+            self._disconnected = disconnected
+            self.logger.info(f"Port {self.port_id} disconnect state: {old_state} -> {disconnected}")
+            
+            if disconnected and self.protocol_instance:
+                # Force close the transport to simulate disconnect
+                if hasattr(self.protocol_instance, 'transport') and self.protocol_instance.transport:
+                    self.logger.info(f"Force closing transport for {self.port_id}")
+                    self.protocol_instance.transport.close()
+
+    def is_disconnected(self) -> bool:
+        with self._disconnect_lock:
+            return self._disconnected
+        

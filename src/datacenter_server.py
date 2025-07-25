@@ -200,6 +200,8 @@ class DataCenterServer:
                     with open(file_path, 'w') as f:
                         f.write(content)
                         
+                    self.teardown_all_cells()  # Ensure all cells are removed before loading new topology
+                        
                     success = self.dc.load_topology(file_path)  # Changed from upload_topology
                     
                     os.remove(file_path)  # Clean up the temporary file
@@ -286,7 +288,7 @@ class DataCenterServer:
                         all_metrics[cell_id] = {'error': 'unreachable'}
 
                 await self.broadcast_update('metrics_update', all_metrics)
-                await asyncio.sleep(2)  
+                await asyncio.sleep(0.5)  
 
             except Exception as e:
                 print(f"Error in periodic update: {e}")

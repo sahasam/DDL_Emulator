@@ -235,7 +235,6 @@ class Cell:
                             'bytes_received': stats.get('bytes_received', 0),
                             'events': stats.get('events', 0),
                             'round_trip_latency': stats.get('round_trip_latency', 0),
-                            # ADD FAULT INJECTION STATISTICS FROM PROTOCOL
                             'packets_dropped_in': stats.get('packets_dropped_in', 0),
                             'packets_dropped_out': stats.get('packets_dropped_out', 0),
                             'packets_delayed_in': stats.get('packets_delayed_in', 0),
@@ -261,7 +260,6 @@ class Cell:
                             'signal_queue_size': port.io.signal_q.qsize() if hasattr(port.io.signal_q, 'qsize') else 0
                         })
                     
-                    # Get fault injector status from PORT (this shows the configuration)
                     if hasattr(port, 'faultInjector') and port.faultInjector:
                         fault_state = port.faultInjector.get_state()
                         port_info['fault_injection'] = {
@@ -362,7 +360,13 @@ class Cell:
             
             elif fault_type == 'disconnect':
                 port.set_disconnected(True)
-                return f"Disconnecting port {port_name}"
+                port.faultInjector.update_state(FaultState(is_active=True, drop_rate=0.0, delay_ms=0))
+                if hasattr(port, 'protocol_instance') and port.protocol_instance:
+                    if hasattr(port.protocol_instance, 'transport') and port.protocol_instance.transport:
+                        port.protocol_instance.transport.close()
+                        
+                
+                return f"Disconnected port {port_name} - transport closed"
             
             else:
                 return f"Unknown fault type: {fault_type}"

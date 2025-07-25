@@ -52,10 +52,10 @@ class EthernetProtocolExtended(LinkProtocol):
            
     def _handle_normal_packet(self, data, addr):
         """Handle normal data packets after handshake"""
-        # Track received statistics
         if data == b'HEARTBEAT':
             self._process_received_packet(data, addr)
             return
+        
         if self._should_drop_packet("in"):
             return # packet is droped
         

@@ -52,7 +52,7 @@ class ProtoDatacenter:
             
             self.processes[cell_id] = {'process': process, 'log_file': log_file}
             
-            time.sleep(2)
+            time.sleep(0.5)
             
             if process.poll() is not None:
                 try:
@@ -357,7 +357,7 @@ class ProtoDatacenter:
                     print(f"Failed to create cell {cell_id} on {host}:{rpc_port}")
                     return {'success': False, 'message': f'Failed to create cell {cell_id} on {host}:{rpc_port}'}
                 
-                time.sleep(1)  # Brief pause between cell creation
+                time.sleep(0.5)  # Brief pause between cell creation
                 
             print('--- Creating Links ---')
             for link_index, link_config in enumerate(topology.get('links', [])):
