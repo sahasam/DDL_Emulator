@@ -133,7 +133,9 @@ class Sim:
         write_q = PipeQueue()
         signal_q = PipeQueue()
         faultInjector = ThreadSafeFaultInjector()
-        self.thread_manager.register_pipes([read_q, write_q, signal_q])
+        port_id = f"{self.node_id}:{port_config['name']}"
+        
+        self.thread_manager.register_pipes(port_id, [read_q, write_q, signal_q])
         self.thread_manager.register_port(
             UDPPort(
                 config=PortConfig(
