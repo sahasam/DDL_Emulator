@@ -15,14 +15,14 @@ from hermes.port.Agent import Agent
 from hermes.faults.FaultInjector import FaultState
 
 class Cell:
-    def __init__(self, cell_id, rpc_port):
+    def __init__(self, cell_id, rpc_port, bind_addr="localhost"):
         self.cell_id = cell_id
         self.rpc_port = rpc_port
         self.sim = None
         self.rpc_server = None
         self.running = False
         self.port_queues = {}
-        
+        self.bind_addr = bind_addr
         
     def start(self):
         """Start the cell with XML-RPC server."""
@@ -51,7 +51,7 @@ class Cell:
         
         def run_server():
             self.running = True
-            self.rpc_server = SimpleXMLRPCServer(("localhost", self.rpc_port), allow_none=True, logRequests=False)
+            self.rpc_server = SimpleXMLRPCServer((self.bind_addr, self.rpc_port), allow_none=True, logRequests=False)
             
             self.rpc_server.register_function(self.bind_port, "bind_port")
             self.rpc_server.register_function(self.unbind_port, "unbind_port")
@@ -234,8 +234,23 @@ class Cell:
                             'bytes_sent': stats.get('bytes_sent', 0),
                             'bytes_received': stats.get('bytes_received', 0),
                             'events': stats.get('events', 0),
-                            'round_trip_latency': stats.get('round_trip_latency', 0)
+                            'round_trip_latency': stats.get('round_trip_latency', 0),
+                            'packets_dropped_in': stats.get('packets_dropped_in', 0),
+                            'packets_dropped_out': stats.get('packets_dropped_out', 0),
+                            'packets_delayed_in': stats.get('packets_delayed_in', 0),
+                            'packets_delayed_out': stats.get('packets_delayed_out', 0)
                         })
+                    
+                    # Get extended protocol statistics if this is EthernetProtocolExtended
+                    if hasattr(protocol, 'get_link_status'):
+                        try:
+                            link_status = protocol.get_link_status()
+                            if 'statistics' in link_status:
+                                extended_stats = link_status['statistics']
+                                # Merge extended statistics
+                                port_info.update(extended_stats)
+                        except Exception as e:
+                            print(f"Error getting extended link status: {e}")
                     
                     # Get queue lengths (important for debugging)
                     if hasattr(port, 'io'):
@@ -245,13 +260,21 @@ class Cell:
                             'signal_queue_size': port.io.signal_q.qsize() if hasattr(port.io.signal_q, 'qsize') else 0
                         })
                     
-                    # Get fault injector status
                     if hasattr(port, 'faultInjector') and port.faultInjector:
                         fault_state = port.faultInjector.get_state()
                         port_info['fault_injection'] = {
                             'active': fault_state.is_active,
                             'drop_rate': fault_state.drop_rate,
                             'delay_ms': fault_state.delay_ms
+                        }
+                    
+                    # ALSO get fault injector status from PROTOCOL (this shows the actual impact)
+                    if hasattr(protocol, 'faultInjector') and protocol.faultInjector:
+                        protocol_fault_state = protocol.faultInjector.get_state()
+                        port_info['protocol_fault_injection'] = {
+                            'active': protocol_fault_state.is_active,
+                            'drop_rate': protocol_fault_state.drop_rate,
+                            'delay_ms': protocol_fault_state.delay_ms
                         }
                     
                     # Get neighbor information
@@ -324,19 +347,26 @@ class Cell:
             
             if fault_type == 'drop':
                 drop_rate = params.get('drop_rate', 0.1)
-                fault_state = FaultState(is_active=True, drop_rate=drop_rate, delay_ms=0)
+                fault_state = FaultState(is_active=True, drop_rate=drop_rate, delay_ms=port.faultInjector._state.delay_ms)
                 port.faultInjector.update_state(fault_state)
+                
                 return f"Injecting {drop_rate * 100}% drop fault on port {port_name}"
             
             elif fault_type == 'delay':
                 delay_ms = params.get('delay_ms', 100)
-                fault_state = FaultState(is_active=True, drop_rate=0.0, delay_ms=delay_ms)
+                fault_state = FaultState(is_active=True, drop_rate=port.faultInjector._state.drop_rate, delay_ms=delay_ms)
                 port.faultInjector.update_state(fault_state)
                 return f"Injecting {delay_ms}ms delay fault on port {port_name}"
             
             elif fault_type == 'disconnect':
                 port.set_disconnected(True)
-                return f"Disconnecting port {port_name}"
+                port.faultInjector.update_state(FaultState(is_active=True, drop_rate=0.0, delay_ms=0))
+                if hasattr(port, 'protocol_instance') and port.protocol_instance:
+                    if hasattr(port.protocol_instance, 'transport') and port.protocol_instance.transport:
+                        port.protocol_instance.transport.close()
+                        
+                
+                return f"Disconnected port {port_name} - transport closed"
             
             else:
                 return f"Unknown fault type: {fault_type}"
@@ -371,10 +401,12 @@ def main():
     parser = argparse.ArgumentParser(description='Network Cell')
     parser.add_argument('--cell-id', required=True, help='Unique cell identifier')
     parser.add_argument('--rpc-port', type=int, required=True, help='XML-RPC port')
+    parser.add_argument('--bind-addr', default="localhost", help='Address to bind XML-RPC server (default: localhost)')
+
     
     args = parser.parse_args()
 
-    cell = Cell(args.cell_id, args.rpc_port)
+    cell = Cell(args.cell_id, args.rpc_port, args.bind_addr)
     cell.start()
         
 if __name__ == "__main__":
