@@ -105,13 +105,13 @@ class DataCenterServer:
                 cell_id = params['cell_id']
                 rpc_port = params.get('rpc_port', None)
                 host = params.get('host', 'localhost')
-                result = self.dc.add_cell(cell_id, rpc_port, host)
+                result = await self.dc.add_cell(cell_id, rpc_port, host)
                 
                 return result
                 
             elif command == 'remove_cell':
                 cell_id = params['cell_id']
-                result = self.dc.remove_cell(cell_id)
+                result =  await self.dc.remove_cell(cell_id)
                 
                 return result
             
@@ -200,11 +200,11 @@ class DataCenterServer:
                     with open(file_path, 'w') as f:
                         f.write(content)
                         
-                    self.teardown_all_cells()  # Ensure all cells are removed before loading new topology
+                    self.teardown_all_cells()  
                         
-                    success = self.dc.load_topology(file_path)  # Changed from upload_topology
+                    success = self.dc.load_topology(file_path) 
                     
-                    os.remove(file_path)  # Clean up the temporary file
+                    os.remove(file_path)  
                     
                     return {
                         'success': success.get('success', False) if isinstance(success, dict) else success,
@@ -305,8 +305,8 @@ def main():
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        server.teardown_all_cells()
         print("\nShutting down server...")
+        server.teardown_all_cells()
         print("Server shutdown complete.")
        
 if __name__ == "__main__":
