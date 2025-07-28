@@ -6,6 +6,7 @@ import tempfile
 import os
 import traceback
 import yaml
+import asyncio
 
 class ProtoDatacenter:
     def __init__(self):
@@ -38,7 +39,7 @@ class ProtoDatacenter:
 
         
         
-    def _add_local_cell(self, cell_id: str, rpc_port: int, host="localhost") -> dict:
+    async def _add_local_cell(self, cell_id: str, rpc_port: int, host="localhost") -> dict:
         """Add a cell either locally or remotely"""
         try:
             cell_script = "src/cell.py"
@@ -48,7 +49,11 @@ class ProtoDatacenter:
             
             print(f"Starting cell {cell_id} on port {rpc_port} with command: {' '.join(cmd)}")
             with open(log_file, 'w') as f:
-                process = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, text=True)
+                process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=f,
+                stderr=asyncio.subprocess.STDOUT
+        )
             
             self.processes[cell_id] = {'process': process, 'log_file': log_file}
             
@@ -104,15 +109,15 @@ class ProtoDatacenter:
         except Exception as e:
             print(f"Failed to create local " f'cell {cell_id} on {host} at port {rpc_port}: {e}')
         
-    def add_cell(self, cell_id: str, rpc_port: int, host="localhost") -> dict:
+    async def add_cell(self, cell_id: str, rpc_port: int, host="localhost") -> dict:
         """Connects to a cell"""
         if self._is_local_host(host):
-            return self._add_local_cell(cell_id, rpc_port, host)
+            return await self._add_local_cell(cell_id, rpc_port, host)
         else:
             return self._add_remote_cell(cell_id, rpc_port, host)
             
 
-    def remove_cell(self, cell_id: int) -> dict:
+    async def remove_cell(self, cell_id: int) -> dict:
         """Remove and shutdown a cell"""
         if cell_id not in self.cell_locations:
             return {'success': False, 'message': f'Cell {cell_id} is not connected.'}
@@ -129,7 +134,7 @@ class ProtoDatacenter:
                     del self.cells[cell_id]
                     
             if self._is_local_host(host):
-                return self._remove_local_cell(cell_id)
+                return await self._remove_local_cell(cell_id)
             else:
                 return self._remove_remote_cell(cell_id, host)
         
@@ -137,12 +142,13 @@ class ProtoDatacenter:
             print(f'Error removing cell {cell_id}: {e}')
             return {'success': False, 'message': f'Error removing cell {cell_id}: {e}'}
         
-    def _remove_local_cell(self, cell_id: str) -> dict:
+    async def _remove_local_cell(self, cell_id: str) -> dict:
         """Remove local cell"""
         if cell_id in self.processes:
             process_info = self.processes[cell_id]
+            
             process_info['process'].terminate()
-            process_info['process'].wait()
+            await process_info['process'].wait()
             
             try:
                 os.remove(process_info['log_file'])
@@ -188,6 +194,7 @@ class ProtoDatacenter:
             
             config2 = {"interface": port2_addr}
             result2 = self.cells[cell2_id].bind_port(port2_name, config2)
+            
             print(f"Cell {cell2_id} bind result: {result2}")
             
             self.links[(cell1_id, port1_name, cell2_id, port2_name)] = (port1_addr, port2_addr)
@@ -337,7 +344,7 @@ class ProtoDatacenter:
 
 
             
-    def load_topology(self, topology_file) -> dict:
+    async def load_topology(self, topology_file) -> dict:
         """Load topology with support for remote hosts"""
         try:
             with open(topology_file, 'r') as f:
@@ -346,18 +353,26 @@ class ProtoDatacenter:
             topology = config['topology']
             
             print('--- Creating Cells ---')
+            tasks = []
             for cell_config in topology.get('cells', []):
                 cell_id = cell_config['id']
                 rpc_port = cell_config['rpc_port']
                 host = cell_config.get('host', 'localhost')  # Default to localhost
                 
-                print(f"Creating cell {cell_id} on {host}:{rpc_port}")
-                success = self.add_cell(cell_id, rpc_port, host)
-                if not success:
-                    print(f"Failed to create cell {cell_id} on {host}:{rpc_port}")
-                    return {'success': False, 'message': f'Failed to create cell {cell_id} on {host}:{rpc_port}'}
+                print(f"Scheduling cell {cell_id} creation on {host}:{rpc_port}")
+                tasks.append(self.add_cell(cell_id, rpc_port, host))
                 
-                time.sleep(0.5)  # Brief pause between cell creation
+                
+            results = await asyncio.gather(*tasks)
+            
+            for result, config in zip(results, topology.get('cells', [])):
+                if not result['success']:
+                    cid = config['id']
+                    h = config.get('host', 'localhost')
+                    p = config['rpc_port']
+                    print(f"Failed to create cell {cid} on {h}:{p}")
+                    return {'success': False, 'message': f"Failed to create cell {cid} on {h}:{p}"}
+
                 
             print('--- Creating Links ---')
             for link_index, link_config in enumerate(topology.get('links', [])):
@@ -365,9 +380,18 @@ class ProtoDatacenter:
                 if not success:
                     print(f"Failed to create link {link_index} from config")
                     return {'success': False, 'message': f'Failed to create link {link_index} from config'}
-                
-                time.sleep(0.5)  # Brief pause between link creation
-                
+                                
+        
+        
+            print('--- Creating bindings (if supplied) ---')
+            for cell_bindings in topology.get('bindings', []):
+                cell_id = cell_bindings['cell_id']
+                port_name = cell_bindings['portname']
+                addr = cell_bindings.get('addr', {})
+                self.cells[cell_id].bind_port(port_name, addr)
+            
+            
+            
             print('--- Topology Loaded Successfully ---')
             return {'success': True, 'message': 'Topology loaded successfully.'}
     
@@ -505,7 +529,7 @@ def help():
     print("  cleanup")
     print("  quit")
             
-def main():
+async def main():
     dc = ProtoDatacenter()
     
     help()
@@ -527,11 +551,11 @@ def main():
             
             elif cmd[0] == 'add' and len(cmd) == 3:
                 cell_id, rpc_port = cmd[1], int(cmd[2])
-                dc.add_cell(cell_id, rpc_port)
+                await dc.add_cell(cell_id, rpc_port)
                 
             elif cmd[0] == 'remove' and len(cmd) == 2:
                 cell_id = cmd[1]
-                dc.remove_cell(cell_id)
+                await dc.remove_cell(cell_id)
                 
             elif cmd[0] == 'logs' and len(cmd) == 2:
                 cell_id = cmd[1]
@@ -594,7 +618,7 @@ def main():
             
             elif cmd[0] == 'teardown':
                 for cell_id in list(dc.cells.keys()):
-                    dc.remove_cell(cell_id)
+                    await dc.remove_cell(cell_id)
             
             elif cmd[0] == 'help':
                 help()
@@ -627,4 +651,4 @@ def main():
            
             
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

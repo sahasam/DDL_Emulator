@@ -268,7 +268,6 @@ class Cell:
                             'delay_ms': fault_state.delay_ms
                         }
                     
-                    # ALSO get fault injector status from PROTOCOL (this shows the actual impact)
                     if hasattr(protocol, 'faultInjector') and protocol.faultInjector:
                         protocol_fault_state = protocol.faultInjector.get_state()
                         port_info['protocol_fault_injection'] = {
