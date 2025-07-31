@@ -16,7 +16,7 @@ class DataCenterServer:
     def __del__(self):
         """Destructor to ensure proper cleanup"""
         print("DataCenterServer is being deleted. Cleaning up...")
-        self.teardown_all_cells()
+        asyncio.run(self.teardown_all_cells())
         print("All cells removed successfully.")
         
     def start(self):
@@ -182,7 +182,7 @@ class DataCenterServer:
                 
             elif command == 'teardown':
                 for cell_id in list(self.dc.cells.keys()):
-                    self.dc.remove_cell(cell_id)
+                    await self.dc.remove_cell(cell_id)
                         
                 return {'success': True, 'message': 'All cells removed successfully.'}
             
@@ -200,9 +200,9 @@ class DataCenterServer:
                     with open(file_path, 'w') as f:
                         f.write(content)
                         
-                    self.teardown_all_cells()  
+                    await self.teardown_all_cells()  
                         
-                    success = self.dc.load_topology(file_path) 
+                    success = await self.dc.load_topology(file_path) 
                     
                     os.remove(file_path)  
                     
@@ -239,16 +239,38 @@ class DataCenterServer:
                     
                 except Exception as e:
                     return {'success': False, 'message': f'Save failed: {str(e)}'}
+            
+            elif command == 'bind':
+                try:
+                    cell_id = params['cell_id']
+                    port_name = params['port_name']
+                    addr = params['addr']
+                    
+                    result = self.dc.bind(cell_id, port_name, addr)
+                    return result
+                except Exception as e:
+                    return {'success': False, 'message': f'Bind failed: {str(e)}'}
+                
+            elif command == 'unbind':
+                try:
+                    cell_id = params['cell_id']
+                    port_name = params['port_name']
+                    result = self.dc.unbind(cell_id, port_name)
+                    return result
+                
+                except Exception as e:
+                    return {'success': False, 'message': f'Unbind failed: {str(e)}'}
             else:
                 return {'success': False, 'message': f'Unknown command: {command}'}
+            
             
         except Exception as e:
             return {'success': False, 'message': str(e)}
 
-    def teardown_all_cells(self):
+    async def teardown_all_cells(self):
         try:
             for cell_id in list(self.dc.cells.keys()):
-                self.dc.remove_cell(cell_id)
+                await self.dc.remove_cell(cell_id)
                 
         except Exception as e:
             print(f"Error during teardown: {e}")
@@ -306,7 +328,7 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         print("\nShutting down server...")
-        server.teardown_all_cells()
+        asyncio.run(server.teardown_all_cells())
         print("Server shutdown complete.")
        
 if __name__ == "__main__":

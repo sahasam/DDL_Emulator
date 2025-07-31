@@ -50,16 +50,18 @@ class ProtoDatacenter:
             print(f"Starting cell {cell_id} on port {rpc_port} with command: {' '.join(cmd)}")
             with open(log_file, 'w') as f:
                 process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=f,
-                stderr=asyncio.subprocess.STDOUT
-        )
+                    *cmd,
+                    stdout=f,
+                    stderr=asyncio.subprocess.STDOUT
+                )
             
             self.processes[cell_id] = {'process': process, 'log_file': log_file}
             
-            time.sleep(0.5)
+            # Give the process a moment to start
+            await asyncio.sleep(1.0)
             
-            if process.poll() is not None:
+            # Change process.poll() to process.returncode
+            if process.returncode is not None:
                 try:
                     with open(log_file, 'r') as f:
                         output = f.read()
@@ -83,7 +85,7 @@ class ProtoDatacenter:
         except Exception as e:
             print(f"Failed to connect to cell {cell_id} at port {rpc_port}: {e}")
             return {'success': False, 'message': f'Failed to connect to cell {cell_id} at port {rpc_port}: {e}'}
-        
+            
     def _add_remote_cell(self, cell_id: str, rpc_port: int, host:str) -> dict:
         """Add cell on a remote Mac Mini"""
         try:
@@ -242,6 +244,45 @@ class ProtoDatacenter:
         except Exception as e:
             print(f"Failed to check port {port_name} on cell {cell_id}: {e}")
             return {'success': False, 'message': f'Failed to check port {port_name} on cell {cell_id}: {e}'}    
+
+    def bind_port(self, cell_id: str, port_name: str, addr: str) -> dict:
+        if cell_id not in self.cells:
+            print(f"Cell {cell_id} is not connected.")
+            return {'success': False, 'message': f'Cell {cell_id} is not connected.'}
+            
+        if port_name in self.cells[cell_id].ports:
+            print(f"Cell {cell_id} already has port {port_name} bound.")
+            return {'success': False, 'message': f'Cell {cell_id} already has port {port_name} bound.'}
+        
+        try:
+            print(f"Binding port {port_name} on cell {cell_id} to address {addr}")
+            result = self.cells[cell_id].bind_port(port_name, {"interface": addr})
+            
+            print(f"Port bind result: {result}")
+            return {'success': True, 'message': f'Port {port_name} on cell {cell_id} bound to {addr}'}
+        
+        except Exception as e:
+            print(f"Failed to bind port {port_name} on cell {cell_id}: {e}")
+            return {'success': False, 'message': f'Failed to bind port {port_name} on cell {cell_id}: {e}'}
+        
+    def unbind_port(self, cell_id: str, port_name: str) -> dict:
+        if cell_id not in self.cells:
+            print(f"Cell {cell_id} is not connected.")
+            return {'success': False, 'message': f'Cell {cell_id} is not connected.'}
+        
+        if port_name not in self.cells[cell_id].ports:
+            print(f"Cell {cell_id} does not have port {port_name} bound.")
+            return {'success': False, 'message': f'Cell {cell_id} does not have port {port_name} bound.'}
+        
+        try:
+            result = self.cells[cell_id].unbind_port(port_name)
+            print(f"Port {port_name} on cell {cell_id} unbound: {result}")
+            return {'success': True, 'message': f'Port {port_name} on cell {cell_id} unbound successfully.'}
+        
+        except:
+            print(f"Failed to unbind port {port_name} on cell {cell_id}")
+            return {'success': False, 'message': f'Failed to unbind port {port_name} on cell {cell_id}'}
+            
             
     def unlink(self, cell1_id: str, port1_name: str, cell2_id: str, port2_name: str) -> dict:
         """Unlink two ports between cells"""
@@ -614,7 +655,7 @@ async def main():
             
             elif cmd[0] == 'load_topology' and len(cmd) == 2:
                 topology_file = cmd[1]
-                dc.load_topology(topology_file)
+                await dc.load_topology(topology_file)
             
             elif cmd[0] == 'teardown':
                 for cell_id in list(dc.cells.keys()):

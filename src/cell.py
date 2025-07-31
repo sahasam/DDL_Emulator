@@ -8,9 +8,9 @@ from xmlrpc.server import SimpleXMLRPCServer
 import threading
 import argparse
 import time
-
+import asyncio
 from hermes.sim.Sim import Sim
-from hermes.port.Agent import Agent
+from hermes.port.AgentECNF import Agent
 
 from hermes.faults.FaultInjector import FaultState
 
@@ -24,28 +24,43 @@ class Cell:
         self.port_queues = {}
         self.bind_addr = bind_addr
         
+        self.metric_cache = {}
+        
     def start(self):
         """Start the cell with XML-RPC server."""
         self.start_time = time.time()
         self.sim = Sim()
         self.sim.configure_logging()
-        
-        # start rpc server
-        self._start_rpc_server()
         self.agent = Agent(self.cell_id, self.sim.thread_manager)
+        self.agent_thread = threading.Thread(target=self._run_agent, daemon=True)
         
-        if not self.agent.is_alive():
-            self.agent.start()
-            print(f"Agent started for cell {self.cell_id}")
-        
+        self.agent_thread.start()
+        # start rpc server
+        time.sleep(0.2)
+
+        self._start_rpc_server()
+
         try:
             while self.running:
                 time.sleep(1)
         except KeyboardInterrupt:
             self.shutdown()
-        
-        # start event loop
-        
+
+
+    def _run_agent(self):
+        """Run the async agent in its own event loop"""
+        try:
+            # Create new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Run the agent
+            loop.run_until_complete(self.agent.run())
+        except Exception as e:
+            print(f"Agent error: {e}")
+        finally:
+            loop.close()       
+             
     def _start_rpc_server(self):
         """Start the XML-RPC server in the background"""
         
@@ -177,16 +192,20 @@ class Cell:
         print(f"Shutting down cell {self.cell_id}")
         self.running = False
 
-        if hasattr(self, 'agent') and self.agent.is_alive():
-            self.agent.stop()
-            self.agent.join(timeout=2.0) 
+        # Stop the agent
+        if hasattr(self, 'agent'):
+            self.agent.stop()  # This sets agent.running = False
+        
+        # Wait for agent thread to finish
+        if hasattr(self, 'agent_thread') and self.agent_thread.is_alive():
+            self.agent_thread.join(timeout=2.0) 
             print(f"Agent for cell {self.cell_id} stopped")
             
         if self.rpc_server:
             threading.Thread(target=self.rpc_server.shutdown, daemon=True).start()
         
         return "Shutting down..."
-    
+        
     def get_metrics(self):
         """Get real-time metrics from the cell"""
         try:
@@ -286,20 +305,15 @@ class Cell:
                 metrics['ports'][port_id] = port_info
             
             # Enhanced Agent metrics with tree details
-            if hasattr(self, 'agent') and self.agent.is_alive():
+            if (hasattr(self, 'agent') and hasattr(self, 'agent_thread') and 
+                self.agent_thread.is_alive() and self.agent.running):
                 try:
                     snapshot = self.agent.get_snapshot()
                     
-                    trees_info = {}
-                    for tree_id, tree_data in snapshot.get('trees', {}).items():
-                        if hasattr(tree_data, 'to_dict'):
-                            tree_dict = tree_data.to_dict()
-                            # Add more tree details
-                            tree_dict['leafward_ports_count'] = len(tree_dict.get('leafward_portids', []))
-                            trees_info[tree_id] = tree_dict
-                        else:
-                            trees_info[tree_id] = str(tree_data)
+                    # Trees are now already dictionaries, no need for to_dict()
+                    trees_info = snapshot.get('trees', {})
                     
+                    # Port paths processing (unchanged)
                     port_paths_info = {}
                     for path_id, path_data in snapshot.get('port_paths', {}).items():
                         if hasattr(path_data, 'serialize'):
@@ -310,28 +324,69 @@ class Cell:
                         else:
                             port_paths_info[path_id] = str(path_data)
                     
+                    # Build comprehensive agent metrics with all new snapshot data
                     metrics['agent'] = {
                         'status': 'running',
                         'trees_count': len(trees_info),
                         'trees': trees_info,
                         'node_id': str(snapshot.get('node_id', '')),
                         'port_paths': port_paths_info,
-                        'total_leafward_connections': sum(len(tree.get('leafward_portids', [])) for tree in trees_info.values() if isinstance(tree, dict))
+                        
+                        # Add new enhanced snapshot data
+                        'topology': snapshot.get('topology', {}),
+                        'routing_tables': snapshot.get('routing_tables', {}),
+                        'neighbors': snapshot.get('neighbors', {}),
+                        'network_graph': snapshot.get('network_graph', {}),
+                        'dag_metadata': snapshot.get('dag_metadata', {}),
+                        
+                        # Computed metrics
+                        'total_leafward_connections': sum(
+                            len(tree.get('leafward_portids', [])) 
+                            for tree in trees_info.values() 
+                            if isinstance(tree, dict)
+                        ),
+                        'direct_neighbors_count': len(
+                            snapshot.get('neighbors', {}).get('immediate_neighbors', [])
+                        ),
+                        'reachable_nodes_count': len(
+                            snapshot.get('topology', {}).get('reachable_nodes', [])
+                        ),
+                        'root_trees_count': len(
+                            snapshot.get('dag_metadata', {}).get('root_trees', [])
+                        )
                     }
 
                 except Exception as e:
                     metrics['agent'] = {
                         'status': 'running',
-                        'error': str(e)
+                        'error': str(e),
+                        'error_details': f"Snapshot error: {str(e)}"
                     }
             else:
-                metrics['agent'] = {'status': 'stopped'}
-            
+                agent_status = 'stopped'
+                if hasattr(self, 'agent_thread'):
+                    if not self.agent_thread.is_alive():
+                        agent_status = 'thread_dead'
+                    elif not getattr(self, 'agent', None):
+                        agent_status = 'agent_missing'
+                    elif not getattr(self.agent, 'running', False):
+                        agent_status = 'agent_not_running'
+                
+                metrics['agent'] = {
+                    'status': agent_status,
+                    'debug_info': {
+                        'has_agent': hasattr(self, 'agent'),
+                        'has_agent_thread': hasattr(self, 'agent_thread'),
+                        'thread_alive': hasattr(self, 'agent_thread') and self.agent_thread.is_alive(),
+                        'agent_running': hasattr(self, 'agent') and getattr(self.agent, 'running', False)
+                    }
+                }
+
             return metrics
-            
+                    
         except Exception as e:
             return {'error': str(e), 'cell_id': self.cell_id}
-        
+                
     def inject_fault(self, port_name, fault_type, params):
         """Fault injection for a specific port"""
         

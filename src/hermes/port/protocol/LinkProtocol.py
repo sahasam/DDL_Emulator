@@ -25,7 +25,7 @@ class LinkProtocol(asyncio.DatagramProtocol):
                  is_client: bool,
                  faultInjector: Optional[ThreadSafeFaultInjector]=None):
         super().__init__()
-        self.HEARTBEAT_INTERVAL = 0.25
+        self.HEARTBEAT_INTERVAL = 60  # 60 seconds instead of 5
 
         self.logger = logging.getLogger(f"Protocol.{name}")
         self.io = io
