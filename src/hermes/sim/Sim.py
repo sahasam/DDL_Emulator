@@ -14,13 +14,14 @@ import uuid
 
 from hermes.faults.FaultInjector import ThreadSafeFaultInjector
 from hermes.model.ports import PortConfig, PortIO
-from hermes.port.Agent import Agent
+from hermes.port.AgentECNF import Agent
 from hermes.port.Port import UDPPort
 from hermes.port.protocol.ChunkProtocol import ChunkProtocol
 from hermes.port.protocol.Protocol import EthernetProtocol
 from hermes.sim.WebSocketServer import WebSocketServer
 from hermes.sim.PipeQueue import PipeQueue
 from hermes.sim.ThreadManager import ThreadManager
+
 
 
 class Sim:

@@ -36,12 +36,18 @@ class EthernetProtocolExtended(LinkProtocol):
                 'packets_delayed_in': 0,
                 'packets_delayed_out': 0
             }
+            self._last_peer_heartbeat = time.time()
+            self._peer_responsive = True
+            self._peer_monitor_task = None
+            self._silence_threshold = self.HEARTBEAT_INTERVAL * 2
+            
     def on_connected(self):
         """Implementation of required abstract method"""
         self.logger.info("Executing onConnected function")
         self.statistics['connection_time'] = time.time()
         self._send_task = asyncio.get_event_loop().create_task(self._process_send())
         self._send_heartbeat_task = asyncio.get_event_loop().create_task(self._send_heartbeat())
+        self._peer_monitor_task = asyncio.get_event_loop().create_task(self._monitor_peer_liveness())
 
     def on_disconnected(self):
         """Implementation of required abstract method"""
@@ -49,9 +55,31 @@ class EthernetProtocolExtended(LinkProtocol):
             self._send_task.cancel()
         if self._send_heartbeat_task:
             self._send_heartbeat_task.cancel()
-           
+        
+    async def _monitor_peer_liveness(self):
+        """Monitor peer heartbeats - detect unresponsive peers but keep transport open"""
+        try:
+            while self.link_state == self.LinkState.CONNECTED:
+                await asyncio.sleep(1.0)
+                
+                silence_duration = time.time() - self._last_peer_heartbeat
+                
+                if silence_duration > self._silence_threshold and self._peer_responsive:
+                    self.logger.warning(f"⚠️ Peer unresponsive for {silence_duration:.1f}s - keeping transport open")
+                    self._peer_responsive = False
+                    self.io.signal_q.put(b"PEER_UNRESPONSIVE")
+                    
+        except asyncio.CancelledError:
+            self.logger.info("Peer monitoring cancelled")      
     def _handle_normal_packet(self, data, addr):
         """Handle normal data packets after handshake"""
+        
+        self._last_peer_heartbeat = time.time()
+        
+        if not self._peer_responsive:
+            self.logger.info(f"🔄 Peer recovered - traffic resumed")
+            self._peer_responsive = True
+            self.io.signal_q.put(b"PEER_RECOVERED")
         if data == b'HEARTBEAT':
             self._process_received_packet(data, addr)
             return
@@ -96,6 +124,8 @@ class EthernetProtocolExtended(LinkProtocol):
         
         if data == b"HEARTBEAT":
             self.statistics['heartbeats_received'] += 1
+            return
+            
         else:
             self.statistics['data_packets_received'] += 1
             

@@ -82,7 +82,18 @@ class BasePort(threading.Thread):
             self._loop.run_until_complete(gather_cancelled())
             self._loop.close()
     
+    def set_peer_unresponsive(self):
+        """Mark peer as unresponsive - slow down reconnection"""
+        self.peer_responsive = False
+        self.reconnect_backoff = min(self.reconnect_backoff * 2, self.max_backoff)
+        self.logger.info(f"Peer unresponsive - backing off reconnection to {self.reconnect_backoff}s")
     
+    def set_peer_responsive(self):
+        """Mark peer as responsive - reset reconnection"""
+        self.peer_responsive = True
+        self.reconnect_backoff = 1.0
+        self.logger.info("Peer responsive - resetting reconnection backoff")
+        
     async def run_link(self):
         raise NotImplementedError("Subclasses must implement run_link")
     

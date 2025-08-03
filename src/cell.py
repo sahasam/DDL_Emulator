@@ -11,13 +11,17 @@ import time
 import asyncio
 from hermes.sim.Sim import Sim
 from hermes.port.AgentECNF import Agent
-
+import logging
 from hermes.faults.FaultInjector import FaultState
+from hermes.sim.FSPTopologyMixin import FSPTopologyMixin
 
-class Cell:
+class Cell(FSPTopologyMixin):
     def __init__(self, cell_id, rpc_port, bind_addr="localhost"):
+        super().__init__()
+
         self.cell_id = cell_id
         self.rpc_port = rpc_port
+        self.logger = logging.getLogger(f"Cell-{cell_id}")
         self.sim = None
         self.rpc_server = None
         self.running = False
@@ -30,6 +34,7 @@ class Cell:
         """Start the cell with XML-RPC server."""
         self.start_time = time.time()
         self.sim = Sim()
+        self._configure_logging()
         self.sim.configure_logging()
         self.agent = Agent(self.cell_id, self.sim.thread_manager)
         self.agent_thread = threading.Thread(target=self._run_agent, daemon=True)
@@ -45,6 +50,33 @@ class Cell:
                 time.sleep(1)
         except KeyboardInterrupt:
             self.shutdown()
+    
+    def _configure_logging(self):
+        """Configure logging to write to stdout for subprocess capture"""
+        import logging
+        import sys
+        
+        # Create logger for this cell
+        self.logger = logging.getLogger(f"cell-{self.cell_id}")
+        self.logger.setLevel(logging.INFO)
+        
+        # Remove any existing handlers to avoid duplicates
+        self.logger.handlers.clear()
+        
+        # Create stdout handler (so subprocess captures it)
+        stdout_handler = logging.StreamHandler(sys.stdout)
+        stdout_handler.setLevel(logging.INFO)
+        
+        # Create formatter
+        formatter = logging.Formatter(
+            f'%(asctime)s - {self.cell_id} - %(name)s - %(levelname)s - %(message)s'
+        )
+        stdout_handler.setFormatter(formatter)
+        
+        # Add handler to logger
+        self.logger.addHandler(stdout_handler)
+        
+        print(f"Logging configured for {self.cell_id}")  # This will still go to log file
 
 
     def _run_agent(self):
@@ -53,11 +85,14 @@ class Cell:
             # Create new event loop for this thread
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            
+            self.agent_loop = loop   
             # Run the agent
+            if hasattr(self, '_register_fsp_handlers'):
+                self._register_fsp_handlers()
+                
             loop.run_until_complete(self.agent.run())
         except Exception as e:
-            print(f"Agent error: {e}")
+            self.logger.info(f"Agent error: {e}")
         finally:
             loop.close()       
              
@@ -68,6 +103,7 @@ class Cell:
             self.running = True
             self.rpc_server = SimpleXMLRPCServer((self.bind_addr, self.rpc_port), allow_none=True, logRequests=False)
             
+            self.rpc_server.register_function(self.clear_messages, "clear_messages")
             self.rpc_server.register_function(self.bind_port, "bind_port")
             self.rpc_server.register_function(self.unbind_port, "unbind_port")
             self.rpc_server.register_function(self.shutdown, "shutdown")
@@ -76,8 +112,18 @@ class Cell:
             self.rpc_server.register_function(self.get_metrics, "get_metrics")
             self.rpc_server.register_function(self.inject_fault, "inject_fault")
             self.rpc_server.register_function(self.clear_fault, "clear_fault")
+            self.rpc_server.register_function(self.send_message, "send_message")
+            self.rpc_server.register_function(self.get_messages, "get_messages")
+            self.rpc_server.register_function(self.pop_message, "pop_message")
+
+            if hasattr(self, 'get_fsp_status') and hasattr(self, 'trigger_fsp') and hasattr(self, 'establish_topology'):
+                self.rpc_server.register_function(self.get_fsp_status, "get_fsp_status")
+                self.rpc_server.register_function(self.trigger_fsp, "trigger_fsp")
+                self.rpc_server.register_function(self.establish_topology, "establish_topology")
+                self.rpc_server.register_function(self.trigger_manual_fsp_as_general, "trigger_manual_fsp_as_general")
+
             
-            print(f"XML-RPC server started on port {self.rpc_port}")
+            self.logger.info(f"XML-RPC server started on port {self.rpc_port}")
             self.rpc_server.serve_forever()
 
         
@@ -92,7 +138,7 @@ class Cell:
             from hermes.sim.PipeQueue import PipeQueue
             from hermes.faults.FaultInjector import ThreadSafeFaultInjector
 
-            print(f"bind_port called: {port_name}, {port_config}")
+            self.logger.info(f"bind_port called: {port_name}, {port_config}")
             
             signal_q = PipeQueue()
             read_q = PipeQueue()
@@ -122,16 +168,16 @@ class Cell:
             self.sim.thread_manager.register_pipes(port_key, [signal_q, read_q, write_q])
             port.start()
             
-            print(f"Port {port_name} started successfully")
+            self.logger.info(f"Port {port_name} started successfully")
             
             return f"Bound port {port_name} with config {port_config} successfully"
 
 
         except Exception as e:
 
-            print(f"Error creating port {port_name}: {e}")
+            self.logger.info(f"Error creating port {port_name}: {e}")
             import traceback
-            traceback.print_exc()
+            traceback.self.logger.info_exc()
             return f"Error binding {port_name}: {str(e)}"
 
     def unbind_port(self, port_name):
@@ -186,11 +232,78 @@ class Cell:
     def heartbeat(self):
         """Health check"""
         return f"alive:{self.cell_id}"
+
+    def get_messages(self, from_node=None):
+        """Get received messages"""
+        try:
+            # Convert empty string back to None
+            from_node_filter = from_node if from_node != "" else None
+            messages = self.agent.get_messages(from_node_filter)
+            
+            if not messages:
+                return []
+            
+            result = []
+            for msg in messages:
+                # Ensure all values are XML-RPC serializable
+                message_data = {
+                    'source': str(msg.source_id) if msg.source_id else "",
+                    'payload': str(msg.payload) if msg.payload is not None else "",
+                    'timestamp': float(msg.timestamp) if msg.timestamp else 0.0,
+                    'message_id': str(msg.message_id) if msg.message_id else ""
+                }
+                result.append(message_data)
+            return result
+        
+        except Exception as e:
+            return {"error": f"Error getting messages: {str(e)}"}
+    
+    def clear_messages(self):
+        """Clear all messages from inbox"""
+        try:
+            count = self.agent.clear_messages()
+            return {"success": True, "message": f"Cleared {count} messages"}
+        except Exception as e:
+            return {"error": f"Error clearing messages: {str(e)}"}
+
+    def pop_message(self):
+        """Get and remove oldest message"""
+        try:
+            msg = self.agent.pop_message()
+            if msg is None:
+                return {"message": "No messages available"}
+            
+            return {
+                'source': str(msg.source_id) if msg.source_id else "",
+                'payload': str(msg.payload) if msg.payload is not None else "",
+                'timestamp': float(msg.timestamp) if msg.timestamp else 0.0,
+                'message_id': str(msg.message_id) if msg.message_id else ""
+            }
+        except Exception as e:
+            return {"error": f"Error popping message: {str(e)}"}
+
+    def send_message(self, destination_id, payload):
+        """Send message to another cell"""
+        try:
+            if not hasattr(self, 'agent_loop') or self.agent_loop.is_closed():
+                return {"error": "Agent event loop not available"}
+                
+            future = asyncio.run_coroutine_threadsafe(
+                self.agent.send_message(str(destination_id), str(payload)),
+                self.agent_loop
+            )
+            result = future.result(timeout=5.0)
+            return {"success": bool(result), "message": f"Message sent: {result}"}
+        except Exception as e:
+            return {"error": f"Error sending message: {str(e)}"}
     
     def shutdown(self):
         """Cell shutdown"""
-        print(f"Shutting down cell {self.cell_id}")
+        self.logger.info(f"Shutting down cell {self.cell_id}")
         self.running = False
+        
+        if hasattr(self, '_cleanup_fsp_handlers'):
+            self._cleanup_fsp_handlers()
 
         # Stop the agent
         if hasattr(self, 'agent'):
@@ -199,7 +312,7 @@ class Cell:
         # Wait for agent thread to finish
         if hasattr(self, 'agent_thread') and self.agent_thread.is_alive():
             self.agent_thread.join(timeout=2.0) 
-            print(f"Agent for cell {self.cell_id} stopped")
+            self.logger.info(f"Agent for cell {self.cell_id} stopped")
             
         if self.rpc_server:
             threading.Thread(target=self.rpc_server.shutdown, daemon=True).start()
@@ -269,7 +382,7 @@ class Cell:
                                 # Merge extended statistics
                                 port_info.update(extended_stats)
                         except Exception as e:
-                            print(f"Error getting extended link status: {e}")
+                            self.logger.info(f"Error getting extended link status: {e}")
                     
                     # Get queue lengths (important for debugging)
                     if hasattr(port, 'io'):
@@ -309,52 +422,8 @@ class Cell:
                 self.agent_thread.is_alive() and self.agent.running):
                 try:
                     snapshot = self.agent.get_snapshot()
-                    
-                    # Trees are now already dictionaries, no need for to_dict()
-                    trees_info = snapshot.get('trees', {})
-                    
-                    # Port paths processing (unchanged)
-                    port_paths_info = {}
-                    for path_id, path_data in snapshot.get('port_paths', {}).items():
-                        if hasattr(path_data, 'serialize'):
-                            try:
-                                port_paths_info[path_id] = path_data.serialize()
-                            except:
-                                port_paths_info[path_id] = str(path_data)
-                        else:
-                            port_paths_info[path_id] = str(path_data)
-                    
-                    # Build comprehensive agent metrics with all new snapshot data
-                    metrics['agent'] = {
-                        'status': 'running',
-                        'trees_count': len(trees_info),
-                        'trees': trees_info,
-                        'node_id': str(snapshot.get('node_id', '')),
-                        'port_paths': port_paths_info,
-                        
-                        # Add new enhanced snapshot data
-                        'topology': snapshot.get('topology', {}),
-                        'routing_tables': snapshot.get('routing_tables', {}),
-                        'neighbors': snapshot.get('neighbors', {}),
-                        'network_graph': snapshot.get('network_graph', {}),
-                        'dag_metadata': snapshot.get('dag_metadata', {}),
-                        
-                        # Computed metrics
-                        'total_leafward_connections': sum(
-                            len(tree.get('leafward_portids', [])) 
-                            for tree in trees_info.values() 
-                            if isinstance(tree, dict)
-                        ),
-                        'direct_neighbors_count': len(
-                            snapshot.get('neighbors', {}).get('immediate_neighbors', [])
-                        ),
-                        'reachable_nodes_count': len(
-                            snapshot.get('topology', {}).get('reachable_nodes', [])
-                        ),
-                        'root_trees_count': len(
-                            snapshot.get('dag_metadata', {}).get('root_trees', [])
-                        )
-                    }
+
+                    metrics['agent'] = snapshot
 
                 except Exception as e:
                     metrics['agent'] = {
@@ -447,7 +516,8 @@ class Cell:
 
         except Exception as e:
             return f"Error clearing faults on {port_name}: {str(e)}"
-
+        
+    
 
 
 

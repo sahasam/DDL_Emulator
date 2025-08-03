@@ -6,59 +6,60 @@ from typing import Set
 import threading
 import time
 
+
 class DataCenterServer:
-    def __init__(self, host='localhost', port=8765):
+    def __init__(self, host="localhost", port=8765):
         self.host = host
         self.port = port
         self.dc = ProtoDatacenter()
         self.websocket_clients: Set = set()
-        
+
     def __del__(self):
         """Destructor to ensure proper cleanup"""
         print("DataCenterServer is being deleted. Cleaning up...")
         asyncio.run(self.teardown_all_cells())
         print("All cells removed successfully.")
-        
+
     def start(self):
         def run_server():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            
+
             async def handle_client(websocket, path):
                 self.websocket_clients.add(websocket)
-                print(f'Client connected: {websocket.remote_address}')
-                
+                print(f"Client connected: {websocket.remote_address}")
+
                 try:
                     async for message in websocket:
-                        print(f'Received message: {message}')
+                        print(f"Received message: {message}")
                         await self.handle_message(websocket, message)
-                        
+
                 except websockets.exceptions.ConnectionClosed:
-                    print(f'Client disconnected: {websocket.remote_address}')
+                    print(f"Client disconnected: {websocket.remote_address}")
                 except Exception as e:
-                    print(f'Error handling client: {e}')
-                    
+                    print(f"Error handling client: {e}")
+
                 finally:
                     self.websocket_clients.discard(websocket)
-                    print(f'Client removed: {websocket.remote_address}')
-            
+                    print(f"Client removed: {websocket.remote_address}")
+
             async def start_server_async():
                 # Start the WebSocket server
                 server = await websockets.server.serve(
-                    handle_client, 
-                    self.host, 
+                    handle_client,
+                    self.host,
                     self.port,
                     ping_interval=None,  # Disable ping
-                    ping_timeout=None    # Disable ping timeout
+                    ping_timeout=None,  # Disable ping timeout
                 )
-                print(f'WebSocket server started on ws://{self.host}:{self.port}')
-                
+                print(f"WebSocket server started on ws://{self.host}:{self.port}")
+
                 # Start periodic updates in the same event loop
                 asyncio.create_task(self.periodic_updates())
-                
+
                 # Keep the server running
                 await server.wait_closed()
-            
+
             # Run the async function
             try:
                 loop.run_until_complete(start_server_async())
@@ -66,224 +67,310 @@ class DataCenterServer:
                 print("Server interrupted")
             finally:
                 loop.close()
-            
+
         server_thread = threading.Thread(target=run_server, daemon=True)
         server_thread.start()
-    
+
     async def handle_message(self, websocket, message):
         """Handle incoming websocket messages"""
         try:
             data = json.loads(message)
-            command = data.get('command')
-            params = data.get('params', {})
-            
+            command = data.get("command")
+            params = data.get("params", {})
+
             result = await self.execute_command(command, params)
-            
+
             response = {
-                'type': 'command_response',
-                'command': command,
-                'result': result,
-                'success': result.get('success', True),
+                "type": "command_response",
+                "command": command,
+                "result": result,
+                "success": result.get("success", True),
             }
-            
+
             await websocket.send(json.dumps(response))
-            
+
         except Exception as e:
             error_response = {
-                'type': 'error',
-                'message': str(e),
+                "type": "error",
+                "message": str(e),
             }
             try:
                 await websocket.send(json.dumps(error_response))
             except:
                 print(f"Failed to send error response: {e}")
-    
+
     async def execute_command(self, command, params):
         """Executes a datacenter command and return results"""
         try:
-            if command == 'add_cell':
-                cell_id = params['cell_id']
-                rpc_port = params.get('rpc_port', None)
-                host = params.get('host', 'localhost')
+            if command == "add_cell":
+                cell_id = params["cell_id"]
+                rpc_port = params.get("rpc_port", None)
+                host = params.get("host", "localhost")
                 result = await self.dc.add_cell(cell_id, rpc_port, host)
-                
+
                 return result
-                
-            elif command == 'remove_cell':
-                cell_id = params['cell_id']
-                result =  await self.dc.remove_cell(cell_id)
-                
+
+            elif command == "remove_cell":
+                cell_id = params["cell_id"]
+                result = await self.dc.remove_cell(cell_id)
+
                 return result
-            
-            elif command == 'create_link':
+
+            elif command == "create_link":
                 result = self.dc.create_link(
-                    params['cell1'], params['port1'],
-                    params['cell2'], params['port2'],
-                    params['addr1'], params['addr2']
+                    params["cell1"],
+                    params["port1"],
+                    params["cell2"],
+                    params["port2"],
+                    params["addr1"],
+                    params["addr2"],
                 )
                 return result
-                
-            elif command == 'get_status':
+
+            elif command == "get_status":
                 status = {}
                 for cell_id, proxy in self.dc.cells.items():
                     try:
                         status[cell_id] = proxy.heartbeat()
                     except:
-                        status[cell_id] = 'unreachable'
-                        
-                return {'success': True, 'data': status}
-            
-            elif command == 'get_metrics':
-                cell_id = params.get('cell_id')
-                
+                        status[cell_id] = "unreachable"
+
+                return {"success": True, "data": status}
+
+            elif command == "get_metrics":
+                cell_id = params.get("cell_id")
+
                 if cell_id in self.dc.cells:
                     try:
-                        metrics = self.dc.cells[cell_id].get_metrics()  
+                        metrics = self.dc.cells[cell_id].get_metrics()
                         return metrics
                     except Exception as e:
-                        return {'success': False, 'message': f'Failed to get metrics: {str(e)}'}
+                        return {
+                            "success": False,
+                            "message": f"Failed to get metrics: {str(e)}",
+                        }
                 else:
-                    return {'success': False, 'message': f'Cell {cell_id} not found.'}
-                
-            elif command == 'inject_fault':
-                try:
-                    fault_params = params.get('fault_params', {})
-                    result = self.dc.inject_fault(params['cell_id'], params['port_name'], params['fault_type'], **fault_params)
-                    return result
-                except Exception as e:
-                    return {'success': False, 'message': f'Fault injection failed: {str(e)}'}
+                    return {"success": False, "message": f"Cell {cell_id} not found."}
 
-            elif command == 'clear_fault':  
+            elif command == "inject_fault":
                 try:
-                    result = self.dc.clear_fault(params['cell_id'], params['port_name'])
-                    
+                    fault_params = params.get("fault_params", {})
+                    result = self.dc.inject_fault(
+                        params["cell_id"],
+                        params["port_name"],
+                        params["fault_type"],
+                        **fault_params,
+                    )
                     return result
                 except Exception as e:
-                    return {'success': False, 'message': f'Clear fault failed: {str(e)}'}
-            
-            elif command == 'get_topology':
+                    return {
+                        "success": False,
+                        "message": f"Fault injection failed: {str(e)}",
+                    }
+
+            elif command == "clear_fault":
+                try:
+                    result = self.dc.clear_fault(params["cell_id"], params["port_name"])
+
+                    return result
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "message": f"Clear fault failed: {str(e)}",
+                    }
+
+            elif command == "get_topology":
                 result = self.dc.get_topology_status()
                 return result
 
-            elif command == 'unlink':
+            elif command == "unlink":
                 result = self.dc.unlink(
-                    params['cell1'], params['port1'],
-                    params['cell2'], params['port2']
+                    params["cell1"], params["port1"], params["cell2"], params["port2"]
                 )
                 return result
-                
-            elif command == 'get_logs':
-                cell_id = params['cell_id']
-                self.dc.get_logs(cell_id) 
+
+            elif command == "get_logs":
+                cell_id = params["cell_id"]
+                self.dc.get_logs(cell_id)
                 return {
-                    'success': True, 
-                    'message': f'Logs for {cell_id} printed to server console'
+                    "success": True,
+                    "message": f"Logs for {cell_id} printed to server console",
                 }
-                
-            elif command == 'teardown':
+
+            elif command == "teardown":
                 for cell_id in list(self.dc.cells.keys()):
                     await self.dc.remove_cell(cell_id)
-                        
-                return {'success': True, 'message': 'All cells removed successfully.'}
-            
-            elif command == 'upload_topology':
+
+                return {"success": True, "message": "All cells removed successfully."}
+
+            elif command == "upload_topology":
                 try:
-                    filename = params['filename']
-                    content = params['content']
-                    
+                    filename = params["filename"]
+                    content = params["content"]
+
                     import tempfile
                     import os
-                    
-                    temp_dir = tempfile.gettempdir()
-                    file_path = os.path.join(temp_dir, f'uploaded_{filename}')
 
-                    with open(file_path, 'w') as f:
+                    temp_dir = tempfile.gettempdir()
+                    file_path = os.path.join(temp_dir, f"uploaded_{filename}")
+
+                    with open(file_path, "w") as f:
                         f.write(content)
-                        
-                    await self.teardown_all_cells()  
-                        
-                    success = await self.dc.load_topology(file_path) 
-                    
-                    os.remove(file_path)  
-                    
+
+                    await self.teardown_all_cells()
+
+                    success = await self.dc.load_topology(file_path)
+
+                    os.remove(file_path)
+
                     return {
-                        'success': success.get('success', False) if isinstance(success, dict) else success,
-                        'message': success.get('message', 'Topology uploaded successfully.') if isinstance(success, dict) else ('Topology uploaded successfully.' if success else 'Failed to upload topology.')
+                        "success": (
+                            success.get("success", False)
+                            if isinstance(success, dict)
+                            else success
+                        ),
+                        "message": (
+                            success.get("message", "Topology uploaded successfully.")
+                            if isinstance(success, dict)
+                            else (
+                                "Topology uploaded successfully."
+                                if success
+                                else "Failed to upload topology."
+                            )
+                        ),
                     }
                 except Exception as e:
-                    return {'success': False, 'message': f'Error uploading topology: {str(e)}'}
-                
-            elif command == 'save_topology':
+                    return {
+                        "success": False,
+                        "message": f"Error uploading topology: {str(e)}",
+                    }
+
+            elif command == "save_topology":
                 try:
-                    filename = params.get('filename', 'topology.yaml')
-                    
+                    filename = params.get("filename", "topology.yaml")
+
                     # Generate current topology
                     topology = {
-                        'topology': {
-                            'cells': [
-                                {'id': cell_id, 'rpc_port': 'unknown'} 
+                        "topology": {
+                            "cells": [
+                                {"id": cell_id, "rpc_port": "unknown"}
                                 for cell_id in self.dc.cells.keys()
                             ],
-                            'links': []  # You'd need to track these
+                            "links": [],  # You'd need to track these
                         }
                     }
-                    
+
                     import yaml
+
                     yaml_content = yaml.dump(topology, default_flow_style=False)
-                    
-                    return {
-                        'success': True,
-                        'data': yaml_content,
-                        'filename': filename
-                    }
-                    
+
+                    return {"success": True, "data": yaml_content, "filename": filename}
+
                 except Exception as e:
-                    return {'success': False, 'message': f'Save failed: {str(e)}'}
-            
-            elif command == 'bind':
+                    return {"success": False, "message": f"Save failed: {str(e)}"}
+
+            elif command == "bind":
                 try:
-                    cell_id = params['cell_id']
-                    port_name = params['port_name']
-                    addr = params['addr']
-                    
+                    cell_id = params["cell_id"]
+                    port_name = params["port_name"]
+                    addr = params["addr"]
+
                     result = self.dc.bind(cell_id, port_name, addr)
                     return result
                 except Exception as e:
-                    return {'success': False, 'message': f'Bind failed: {str(e)}'}
-                
-            elif command == 'unbind':
+                    return {"success": False, "message": f"Bind failed: {str(e)}"}
+
+            elif command == "unbind":
                 try:
-                    cell_id = params['cell_id']
-                    port_name = params['port_name']
+                    cell_id = params["cell_id"]
+                    port_name = params["port_name"]
                     result = self.dc.unbind(cell_id, port_name)
                     return result
-                
+
                 except Exception as e:
-                    return {'success': False, 'message': f'Unbind failed: {str(e)}'}
+                    return {"success": False, "message": f"Unbind failed: {str(e)}"}
+            elif command == "send_message":
+                try:
+                    from_cell = params["from_cell"]
+                    to_cell = params["to_cell"]
+                    message = params["message"]
+                    result = self.dc.send_message(from_cell, to_cell, message)
+                    return result
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "message": f"Send message failed: {str(e)}",
+                    }
+
+            elif command == "get_messages":
+                try:
+                    cell_id = params["cell_id"]
+                    from_cell = params.get("from_cell", None)
+                    result = self.dc.get_messages(cell_id, from_cell)
+                    return result
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "message": f"Get messages failed: {str(e)}",
+                    }
+
+            elif command == "broadcast_message":
+                try:
+                    cell_id = params["cell_id"]
+                    message = params["message"]
+                    result = self.dc.broadcast_message(cell_id, message)
+                    return result
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "message": f"Broadcast message failed: {str(e)}",
+                    }
+
+            elif command == "clear_messages":
+                try:
+                    cell_id = params["cell_id"]
+                    result = self.dc.clear_messages(cell_id)
+                    return result
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "message": f"Clear messages failed: {str(e)}",
+                    }
+                    
+            elif command == 'manual_fsp':
+                try:
+                    general = params['general']
+                    result = self.dc.trigger_manual_fsp(general)
+                    return result
+                except Exception as e:
+                    return {"success": False, "message": f"Manual FSP failed: {str(e)}"}
+                
+            elif command == 'all_fsp_status':
+                try:
+                    result = self.dc.get_all_fsp_status()
+                    return result
+                except Exception as e:
+                    return {"success": False, "message": f"Get FSP status failed: {str(e)}"}
+
             else:
-                return {'success': False, 'message': f'Unknown command: {command}'}
-            
-            
+                return {"success": False, "message": f"Unknown command: {command}"}
+
         except Exception as e:
-            return {'success': False, 'message': str(e)}
+            return {"success": False, "message": str(e)}
 
     async def teardown_all_cells(self):
         try:
             for cell_id in list(self.dc.cells.keys()):
                 await self.dc.remove_cell(cell_id)
-                
+
         except Exception as e:
             print(f"Error during teardown: {e}")
-        
+
     async def broadcast_update(self, update_type, data):
         if not self.websocket_clients:
             return
-        
-        message = {
-            'type': update_type,
-            'timestamp': time.time(),
-            'data': data
-        }
+
+        message = {"type": update_type, "timestamp": time.time(), "data": data}
 
         disconnected = set()
         for client in list(self.websocket_clients):  # Create a copy to iterate over
@@ -294,35 +381,51 @@ class DataCenterServer:
             except Exception as e:
                 print(f"Error broadcasting to client: {e}")
                 disconnected.add(client)
-                
+
         self.websocket_clients -= disconnected
-        
+
+    
+
     async def periodic_updates(self):
         """Send periodic updates - runs in the same event loop as WebSocket server"""
+        metrics_counter = 0
         while True:
             try:
-                all_metrics = {}
-                for cell_id, proxy in self.dc.cells.items():
-                    try:
-                        metrics = proxy.get_metrics()
-                        all_metrics[cell_id] = metrics
-                    except Exception as e:
-                        all_metrics[cell_id] = {'error': 'unreachable'}
+                # Send FSP updates every 50ms (20Hz)
+                try:
+                    fsp_status = self.dc.get_all_fsp_status()
+                    if fsp_status.get("success"):
+                        await self.broadcast_update("fsp_status_update", fsp_status["data"])
+                except Exception as e:
+                    print(f"Error getting FSP status: {e}")
+                
+                # Send metrics updates every 500ms (every 10th iteration)
+                metrics_counter += 1
+                if metrics_counter >= 10:
+                    all_metrics = {}
+                    for cell_id, proxy in self.dc.cells.items():
+                        try:
+                            metrics = proxy.get_metrics()
+                            all_metrics[cell_id] = metrics
+                        except Exception as e:
+                            all_metrics[cell_id] = {"error": "unreachable"}
 
-                await self.broadcast_update('metrics_update', all_metrics)
-                await asyncio.sleep(0.5)  
+                    await self.broadcast_update("metrics_update", all_metrics)
+                    metrics_counter = 0
+
+                await asyncio.sleep(0.05)  # 50ms = 20Hz for FSP updates
 
             except Exception as e:
                 print(f"Error in periodic update: {e}")
                 await asyncio.sleep(5)
-
+                
 def main():
     server = DataCenterServer()
     server.start()
-    
+
     print("DataCenter server is running...")
     print("Press Ctrl+C to stop the server.")
-    
+
     try:
         while True:
             time.sleep(1)
@@ -330,6 +433,7 @@ def main():
         print("\nShutting down server...")
         asyncio.run(server.teardown_all_cells())
         print("Server shutdown complete.")
-       
+
+
 if __name__ == "__main__":
     main()
