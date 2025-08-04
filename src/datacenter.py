@@ -742,7 +742,7 @@ class ProtoDatacenter:
         
         return {"success": True, "data": statuses}
     
-    def teardown(self) -> dict:
+    async def teardown(self) -> dict:
         """Teardown all cells"""
         for cell_id in self.cells:
             try:

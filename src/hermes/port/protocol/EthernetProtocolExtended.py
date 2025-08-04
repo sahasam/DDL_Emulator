@@ -123,6 +123,7 @@ class EthernetProtocolExtended(LinkProtocol):
         self.statistics['events'] += 1
         
         if data == b"HEARTBEAT":
+            self.logger.info('heartbeat received!')
             self.statistics['heartbeats_received'] += 1
             return
             

@@ -430,9 +430,12 @@ def main():
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        print("\nShutting down server...")
-        asyncio.run(server.teardown_all_cells())
-        print("Server shutdown complete.")
+        try:
+            loop = asyncio.get_running_loop()
+            loop.run_until_complete(server.teardown_all_cells())
+        except RuntimeError:
+            # No loop running, safe to use asyncio.run()
+            asyncio.run(server.teardown_all_cells())
 
 
 if __name__ == "__main__":

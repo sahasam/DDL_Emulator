@@ -1,0 +1,94 @@
+# Simple 4-Cell Topology for Debugging
+# Creates a square with one diagonal for redundancy testing
+
+topology:
+  cells:
+    - id: cell1
+      rpc_port: 9000
+      host: "localhost"
+    - id: cell2
+      rpc_port: 9001
+      host: "localhost"
+    - id: cell3
+      rpc_port: 9002
+      host: "localhost"
+    - id: cell4
+      rpc_port: 9003
+      host: "localhost"
+      
+  links:
+    # === SQUARE TOPOLOGY ===
+    # cell1 -> cell2 -> cell3 -> cell4 -> cell1
+    
+    # cell1 ↔ cell2
+    - cell1: cell1
+      port1: port1
+      cell2: cell2
+      port2: port1
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5000:5001"
+        addr2: "127.0.0.1:5001:5000"
+        
+    # cell2 ↔ cell3
+    - cell1: cell2
+      port1: port2
+      cell2: cell3
+      port2: port1
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5002:5003"
+        addr2: "127.0.0.1:5003:5002"
+        
+    # cell3 ↔ cell4
+    - cell1: cell3
+      port1: port2
+      cell2: cell4
+      port2: port1
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5004:5005"
+        addr2: "127.0.0.1:5005:5004"
+        
+    # cell4 ↔ cell1 (completes the square)
+    - cell1: cell4
+      port1: port2
+      cell2: cell1
+      port2: port2
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5006:5007"
+        addr2: "127.0.0.1:5007:5006"
+        
+    # === DIAGONAL (REDUNDANT PATH) ===
+    # cell1 ↔ cell3 (creates redundancy)
+    - cell1: cell1
+      port1: port3
+      cell2: cell3
+      port2: port3
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5008:5009"
+        addr2: "127.0.0.1:5009:5008"
+
+# Network Properties:
+# - Total Cells: 4
+# - Total Links: 5 (square + 1 diagonal)
+# - Simple but has redundancy
+# - Easy to debug hop counts
+#
+# Expected Spanning Trees:
+# - cell1 tree: cell1(root) -> cell2(1 hop), cell3(1 hop), cell4(1 hop)
+# - cell2 tree: cell2(root) -> cell1(1), cell3(1), cell4(2)
+# - etc.
+#
+# Paths from cell1:
+# - To cell2: direct (1 hop)
+# - To cell3: direct via diagonal (1 hop) OR via cell2 (2 hops)
+# - To cell4: direct (1 hop) OR via cell3 (2 hops)
+#
+# Good for testing:
+# - Tree building priority
+# - Hop count accuracy
+# - Redundant path selection
+# - Simple fault injection
