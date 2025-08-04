@@ -872,9 +872,9 @@ class Agent:
             self.logger.error(f"Current trees: {list(self.trees.keys())}")
             self.logger.error(f"Current neighbors: {list(self.neighbors.keys())}")
             self.logger.error(f"Current port_paths: {list(self.port_paths.keys())}")
-
+        
     async def _handle_connected(self, event):
-        """Handle port connection event (enhanced debug version)"""
+        """Handle port connection event with cross-partition topology sync"""
         port_id = event["port_id"]
         self.logger.info(
             f"🔥 === HANDLING CONNECTION EVENT for port {port_id} on {self.node_id} ==="
@@ -884,7 +884,7 @@ class Agent:
         self.logger.info(f"Current trees BEFORE connection: {list(self.trees.keys())}")
         self.logger.info(f"Self tree exists: {self.node_id in self.trees}")
 
-        base_delay = hash(self.node_id) % 5  # 0-4 seconds based on node_xid
+        base_delay = hash(self.node_id) % 5  # 0-4 seconds based on node_id
         jitter = random.uniform(0.5, 1.5)
         total_delay = jitter + base_delay
 
@@ -898,6 +898,7 @@ class Agent:
         async with self.state_lock:
             self.logger.info(f"Current trees AFTER delay: {list(self.trees.keys())}")
 
+            # Ensure we have our own tree
             if self.node_id not in self.trees:
                 tree_instance_id = str(uuid.uuid4())
                 self.trees[self.node_id] = TreeEntry(
@@ -909,70 +910,185 @@ class Agent:
                 self.logger.info(
                     f"🌳 Created NEW tree rooted at cell {self.node_id} with instance {tree_instance_id}"
                 )
-                should_broadcast = True
             else:
                 existing_tree = self.trees[self.node_id]
                 self.logger.info(
-                    f"🌳 Tree for {self.node_id} already exists, but broadcasting anyways: {existing_tree}"
+                    f"🌳 Tree for {self.node_id} already exists: {existing_tree}"
                 )
-                should_broadcast = True
 
-            self.logger.info(f"📡 Should broadcast: {should_broadcast}")
+            # Get current neighbors for all broadcasts
+            current_neighbors = self._get_current_neighbors()
+            self.logger.info(f"👥 Current neighbors for broadcast: {current_neighbors}")
 
-            if should_broadcast:
-                current_neighbors = self._get_current_neighbors()
+            # Get connected ports
+            ports = self.thread_manager.get_ports()
+            connected_ports = {}
+            
+            for pid, port in ports.items():
+                port_state = "UNKNOWN"
+                if port.protocol_instance:
+                    port_state = port.protocol_instance.link_state
+
                 self.logger.info(
-                    f"👥 Current neighbors for broadcast: {current_neighbors}"
+                    f"🔍 Checking port {pid}: protocol_instance={port.protocol_instance is not None}, link_state={port_state}"
                 )
 
+                if (
+                    port.protocol_instance
+                    and port.protocol_instance.link_state == LinkProtocol.LinkState.CONNECTED
+                ):
+                    connected_ports[pid] = port
+                    self.logger.info(f"✅ Port {pid} is connected and ready for broadcast")
+                else:
+                    self.logger.info(f"⏭️ Skipping port {pid} - not connected (state: {port_state})")
+
+            # NEW: Broadcast ALL trees we know about (topology sync)
+            trees_to_broadcast = list(self.trees.keys())
+            self.logger.info(f"🌐 Broadcasting {len(trees_to_broadcast)} trees: {trees_to_broadcast}")
+
+            total_broadcasts = 0
+            for tree_id in trees_to_broadcast:
+                tree_entry = self.trees[tree_id]
+                
+                # Use correct hop count for each tree
                 tb_packet = TreeBuild(
-                    tree_id=self.node_id,
-                    tree_instance_id=self.trees[self.node_id].tree_instance_id,
-                    hops=0,
+                    tree_id=tree_id,
+                    tree_instance_id=tree_entry.tree_instance_id,
+                    hops=tree_entry.hops,  # Use actual distance, not 0!
                     neighbors=current_neighbors,
                 )
 
-                self.logger.info(f"📦 Created TREE_BUILD packet: {tb_packet}")
+                self.logger.info(
+                    f"📦 Broadcasting tree {tree_id} (hops={tree_entry.hops}, "
+                    f"instance={tree_entry.tree_instance_id[:8]}...)"
+                )
+
                 packet_bytes = tb_packet.to_bytes()
-                self.logger.info(f"📦 Packet bytes: {packet_bytes}")
+                tree_broadcast_count = 0
 
-                ports = self.thread_manager.get_ports()
-                broadcast_count = 0
-
-                for pid, port in ports.items():
-                    port_state = "UNKNOWN"
-                    if port.protocol_instance:
-                        port_state = port.protocol_instance.link_state
-
-                    self.logger.info(
-                        f"🔍 Checking port {pid}: protocol_instance={port.protocol_instance is not None}, link_state={port_state}"
-                    )
-
-                    if (
-                        port.protocol_instance
-                        and port.protocol_instance.link_state
-                        == LinkProtocol.LinkState.CONNECTED
-                    ):
-
-                        self.logger.info(
-                            f"📡 Broadcasting TREE_BUILD to connected port {pid}"
-                        )
-                        await self._send_on_port(pid, packet_bytes)
-                        broadcast_count += 1
-                    else:
-                        self.logger.info(
-                            f"⏭️ Skipping port {pid} - not connected (state: {port_state})"
-                        )
+                # Send to all connected ports
+                for pid in connected_ports.keys():
+                    self.logger.info(f"📡 Sending tree {tree_id} to port {pid}")
+                    await self._send_on_port(pid, packet_bytes)
+                    tree_broadcast_count += 1
+                    total_broadcasts += 1
 
                 self.logger.info(
-                    f"📡 Broadcasted TREE_BUILD to {broadcast_count} ports"
+                    f"✅ Broadcasted tree {tree_id} to {tree_broadcast_count} ports"
                 )
-            else:
-                self.logger.info("🚫 No broadcast needed - tree already exists")
+
+                # Small stagger between tree broadcasts to avoid overwhelming network
+                if len(trees_to_broadcast) > 1:
+                    await asyncio.sleep(0.1)
+
+            self.logger.info(
+                f"🌐 === TOPOLOGY SYNC COMPLETE: {total_broadcasts} total broadcasts ==="
+            )
 
         self.logger.info(
             f"🔥 === FINISHED HANDLING CONNECTION for port {port_id} on {self.node_id} ==="
         )
+
+    # async def _handle_connected(self, event):
+    #     """Handle port connection event (enhanced debug version)"""
+    #     port_id = event["port_id"]
+    #     self.logger.info(
+    #         f"🔥 === HANDLING CONNECTION EVENT for port {port_id} on {self.node_id} ==="
+    #     )
+
+    #     # Show current state BEFORE processing
+    #     self.logger.info(f"Current trees BEFORE connection: {list(self.trees.keys())}")
+    #     self.logger.info(f"Self tree exists: {self.node_id in self.trees}")
+
+    #     base_delay = hash(self.node_id) % 5  # 0-4 seconds based on node_xid
+    #     jitter = random.uniform(0.5, 1.5)
+    #     total_delay = jitter + base_delay
+
+    #     self.logger.info(
+    #         f"⏱️ Waiting {total_delay:.2f} seconds before processing connection..."
+    #     )
+    #     await asyncio.sleep(total_delay)
+
+    #     self.logger.info(f"✅ Port {port_id} connected - processing now")
+
+    #     async with self.state_lock:
+    #         self.logger.info(f"Current trees AFTER delay: {list(self.trees.keys())}")
+
+    #         if self.node_id not in self.trees:
+    #             tree_instance_id = str(uuid.uuid4())
+    #             self.trees[self.node_id] = TreeEntry(
+    #                 rootward_portid="",
+    #                 hops=0,
+    #                 tree_instance_id=tree_instance_id,
+    #                 leafward_portids=[],
+    #             )
+    #             self.logger.info(
+    #                 f"🌳 Created NEW tree rooted at cell {self.node_id} with instance {tree_instance_id}"
+    #             )
+    #             should_broadcast = True
+    #         else:
+    #             existing_tree = self.trees[self.node_id]
+    #             self.logger.info(
+    #                 f"🌳 Tree for {self.node_id} already exists, but broadcasting anyways: {existing_tree}"
+    #             )
+    #             should_broadcast = True
+
+    #         self.logger.info(f"📡 Should broadcast: {should_broadcast}")
+
+    #         if should_broadcast:
+    #             current_neighbors = self._get_current_neighbors()
+    #             self.logger.info(
+    #                 f"👥 Current neighbors for broadcast: {current_neighbors}"
+    #             )
+
+    #             tb_packet = TreeBuild(
+    #                 tree_id=self.node_id,
+    #                 tree_instance_id=self.trees[self.node_id].tree_instance_id,
+    #                 hops=0,
+    #                 neighbors=current_neighbors,
+    #             )
+
+    #             self.logger.info(f"📦 Created TREE_BUILD packet: {tb_packet}")
+    #             packet_bytes = tb_packet.to_bytes()
+    #             self.logger.info(f"📦 Packet bytes: {packet_bytes}")
+
+    #             ports = self.thread_manager.get_ports()
+    #             broadcast_count = 0
+
+    #             for pid, port in ports.items():
+    #                 port_state = "UNKNOWN"
+    #                 if port.protocol_instance:
+    #                     port_state = port.protocol_instance.link_state
+
+    #                 self.logger.info(
+    #                     f"🔍 Checking port {pid}: protocol_instance={port.protocol_instance is not None}, link_state={port_state}"
+    #                 )
+
+    #                 if (
+    #                     port.protocol_instance
+    #                     and port.protocol_instance.link_state
+    #                     == LinkProtocol.LinkState.CONNECTED
+    #                 ):
+
+    #                     self.logger.info(
+    #                         f"📡 Broadcasting TREE_BUILD to connected port {pid}"
+    #                     )
+    #                     await self._send_on_port(pid, packet_bytes)
+    #                     broadcast_count += 1
+    #                 else:
+    #                     self.logger.info(
+    #                         f"⏭️ Skipping port {pid} - not connected (state: {port_state})"
+    #                     )
+
+    #             self.logger.info(
+    #                 f"📡 Broadcasted TREE_BUILD to {broadcast_count} ports"
+    #             )
+    #         else:
+    #             self.logger.info("🚫 No broadcast needed - tree already exists")
+
+    #     self.logger.info(
+    #         f"🔥 === FINISHED HANDLING CONNECTION for port {port_id} on {self.node_id} ==="
+    #     )
 
     async def _trigger_tree_healing(self, failed_port=None):
 

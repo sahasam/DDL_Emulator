@@ -116,11 +116,8 @@ class Cell(FSPTopologyMixin):
             self.rpc_server.register_function(self.get_messages, "get_messages")
             self.rpc_server.register_function(self.pop_message, "pop_message")
 
-            if hasattr(self, 'get_fsp_status') and hasattr(self, 'trigger_fsp') and hasattr(self, 'establish_topology'):
-                self.rpc_server.register_function(self.get_fsp_status, "get_fsp_status")
-                self.rpc_server.register_function(self.trigger_fsp, "trigger_fsp")
-                self.rpc_server.register_function(self.establish_topology, "establish_topology")
-                self.rpc_server.register_function(self.trigger_manual_fsp_as_general, "trigger_manual_fsp_as_general")
+            self.rpc_server.register_function(self.get_fsp_status, "get_fsp_status")
+            self.rpc_server.register_function(self.trigger_manual_fsp_as_general, "trigger_manual_fsp_as_general")
 
             
             self.logger.info(f"XML-RPC server started on port {self.rpc_port}")
