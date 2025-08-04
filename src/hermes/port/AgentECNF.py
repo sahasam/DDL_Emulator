@@ -61,6 +61,7 @@ class Agent:
     def __init__(self, node_id: str, thread_manager: ThreadManager):
         super().__init__()
         self.logger = logging.getLogger("Agent")
+        self.logger.disabled = True
 
         self.thread_manager = thread_manager
         self.node_id = node_id

@@ -22,6 +22,8 @@ class Cell(FSPTopologyMixin):
         self.cell_id = cell_id
         self.rpc_port = rpc_port
         self.logger = logging.getLogger(f"Cell-{cell_id}")
+        self.logger.disabled = True
+
         self.sim = None
         self.rpc_server = None
         self.running = False

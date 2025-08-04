@@ -20,7 +20,7 @@ class ThreadManager:
         self._pipes = {}
         self.agent = None
         self.logger = logging.getLogger('ThreadManager')
-
+        self.logger.disabled = True
         self._port_subscribers = []
         self.websocket_server = None
 
