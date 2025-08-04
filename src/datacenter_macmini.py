@@ -30,7 +30,6 @@ class DataCenterServer:
 
             try:
                 async for message in websocket:
-                    print(f"Received message: {message}")
                     await self.handle_message(websocket, message)
 
             except websockets.exceptions.ConnectionClosed:
