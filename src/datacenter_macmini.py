@@ -1,21 +1,168 @@
-from datacenter import ProtoDatacenter
 import asyncio
 import json
 import websockets.server
-from time import sleep
-from flask import Flask, jsonify, request
+import tempfile
+from datacenter import ProtoDatacenter
+from typing import Set
 import threading
+import time
 import socket
 import uuid
-import tempfile
 import os
-from typing import Set
+import signal
 
-app = Flask(__name__)
-dc = None
-shutdown_flag = False
-current_cell_name = None
-websocket_clients: Set = set()
+class DataCenterServer:
+    def __init__(self, host="localhost", port=8765):
+        self.host = host
+        self.port = port
+        self.dc = ProtoDatacenter()
+        self.websocket_clients: Set = set()
+        self.shutdown_event = asyncio.Event()
+        self.server = None
+
+    async def start(self):
+        """Start the websocket server"""
+        async def handle_client(websocket, path):
+            self.websocket_clients.add(websocket)
+            print(f"Client connected: {websocket.remote_address}")
+
+            try:
+                async for message in websocket:
+                    print(f"Received message: {message}")
+                    await self.handle_message(websocket, message)
+
+            except websockets.exceptions.ConnectionClosed:
+                print(f"Client disconnected: {websocket.remote_address}")
+            except Exception as e:
+                print(f"Error handling client: {e}")
+
+            finally:
+                self.websocket_clients.discard(websocket)
+                print(f"Client removed: {websocket.remote_address}")
+
+        # Start the WebSocket server
+        self.server = await websockets.server.serve(
+            handle_client,
+            self.host,
+            self.port,
+            ping_interval=None,
+            ping_timeout=None,
+        )
+        print(f"WebSocket server started on ws://{self.host}:{self.port}")
+
+    async def stop(self):
+        """Stop the server and cleanup"""
+        print("Stopping server...")
+        self.shutdown_event.set()
+        
+        if self.server:
+            self.server.close()
+            await self.server.wait_closed()
+        
+        await self.teardown_all_cells()
+        print("Server stopped successfully.")
+
+    async def handle_message(self, websocket, message):
+        """Handle incoming websocket messages"""
+        try:
+            data = json.loads(message)
+            command = data.get("command")
+            params = data.get("params", {})
+
+            result = await self.execute_command(command, params)
+
+            response = {
+                "type": "command_response",
+                "command": command,
+                "result": result,
+                "success": result.get("success", True),
+            }
+
+            await websocket.send(json.dumps(response))
+
+        except Exception as e:
+            error_response = {
+                "type": "error",
+                "message": str(e),
+            }
+            try:
+                await websocket.send(json.dumps(error_response))
+            except:
+                print(f"Failed to send error response: {e}")
+
+    async def execute_command(self, command, params):
+        """Executes a datacenter command and return results"""
+        try:
+            if command == "get_status":
+                status = {}
+                for cell_id, proxy in self.dc.cells.items():
+                    try:
+                        # Make this async if proxy.heartbeat() is async
+                        status[cell_id] = proxy.heartbeat()
+                    except:
+                        status[cell_id] = "unreachable"
+
+                return {"success": True, "data": status}
+
+            elif command == "get_metrics":
+                cell_id = params.get("cell_id")
+
+                if cell_id in self.dc.cells:
+                    try:
+                        metrics = self.dc.cells[cell_id].get_metrics()
+                        return metrics
+                    except Exception as e:
+                        return {
+                            "success": False,
+                            "message": f"Failed to get metrics: {str(e)}",
+                        }
+                else:
+                    return {"success": False, "message": f"Cell {cell_id} not found."}
+                
+            elif command == "shutdown":
+                try:
+                    # Trigger shutdown
+                    asyncio.create_task(self.stop())
+                    return {"success": True, "message": "Datacenter shutdown initiated."}
+                except Exception as e:
+                    return {"success": False, "message": f"Issue with shutdown: {e}"}
+
+            elif command == "teardown":
+                try:
+                    for cell_id in list(self.dc.cells.keys()):
+                        await self.dc.remove_cell(cell_id)
+                    return {"success": True, "message": "All cells removed successfully."}
+                except Exception as e:
+                    return {"success": False, "message": f"Teardown failed: {str(e)}"}
+
+            elif command == 'manual_fsp':
+                try:
+                    result = self.dc.trigger_manual_fsp()
+                    return result
+                except Exception as e:
+                    return {"success": False, "message": f"Manual FSP failed: {str(e)}"}
+                
+            elif command == 'all_fsp_status':
+                try:
+                    result = self.dc.get_all_fsp_status()
+                    return result
+                except Exception as e:
+                    return {"success": False, "message": f"Get FSP status failed: {str(e)}"}
+
+            else:
+                return {"success": False, "message": f"Unknown command: {command}"}
+
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    async def teardown_all_cells(self):
+        """Clean shutdown of all cells"""
+        try:
+            for cell_id in list(self.dc.cells.keys()):
+                await self.dc.remove_cell(cell_id)
+            print("All cells removed successfully.")
+        except Exception as e:
+            print(f"Error during teardown: {e}")
 
 def get_unique_name():
     """Generate a unique name for this machine"""
@@ -55,216 +202,39 @@ async def load_topology_from_string(dc, topology_yaml):
     finally:
         os.unlink(temp_path)
 
-def shutdown_datacenter():
-    """Gracefully shutdown the datacenter"""
-    global dc, shutdown_flag
-    if dc:
-        print("Shutting down datacenter...")
-        for cell_id in list(dc.cells.keys()):
-            try:
-                asyncio.run(dc.cells[cell_id].shutdown())
-            except Exception as e:
-                print(f"Error shutting down cell {cell_id}: {e}")
-        print("Datacenter shutdown complete")
-        dc = None
-    shutdown_flag = True
-
-@app.route('/shutdown', methods=['POST'])
-def shutdown():
-    """POST endpoint to trigger datacenter shutdown"""
-    try:
-        shutdown_datacenter()
-        return jsonify({"status": "success", "message": "Datacenter shutdown initiated"}), 200
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-@app.route('/status', methods=['GET'])
-def status():
-    """GET endpoint to check datacenter status"""
-    global dc
-    if dc and hasattr(dc, 'cells'):
-        cell_names = list(dc.cells.keys())
-        return jsonify({
-            "status": "running" if not shutdown_flag else "shutdown",
-            "cells": cell_names,
-            "cell_count": len(cell_names),
-            "current_cell_name": current_cell_name
-        }), 200
-    else:
-        return jsonify({
-            "status": "not_initialized" if not shutdown_flag else "shutdown",
-            "current_cell_name": current_cell_name
-        }), 503
-
-@app.route('/manual_fsp', methods=['POST'])
-def manual_fsp():
-    """POST endpoint to trigger manual FSP"""
-    global dc
-    try:
-        if not dc:
-            return jsonify({"status": "error", "message": "Datacenter not initialized"}), 503
-        
-        # Get 'general' parameter from JSON body
-        data = request.get_json() or {}
-        general = data.get('general', True)  # Default to True if not specified
-        
-        result = dc.trigger_manual_fsp(general)
-        return jsonify(result), 200
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-async def broadcast_fsp_update(data):
-    """Broadcast FSP updates to all connected WebSocket clients"""
-    if not websocket_clients:
-        return
-
-    message = {"type": "fsp_status_update", "data": data}
+async def main():
+    server = DataCenterServer()
     
-    disconnected = set()
-    for client in list(websocket_clients):
-        try:
-            await client.send(json.dumps(message))
-        except Exception as e:
-            disconnected.add(client)
+    # Setup signal handlers for graceful shutdown
+    def signal_handler():
+        print("Received shutdown signal")
+        asyncio.create_task(server.stop())
     
-    websocket_clients -= disconnected
-
-async def periodic_fsp_updates():
-    """Send periodic FSP updates - 20Hz"""
-    while not shutdown_flag:
-        try:
-            if dc:
-                fsp_status = dc.get_all_fsp_status()
-                if fsp_status.get("success"):
-                    await broadcast_fsp_update(fsp_status["data"])
-            await asyncio.sleep(0.05)  # 50ms = 20Hz
-        except Exception as e:
-            print(f"Error in FSP update: {e}")
-            await asyncio.sleep(1)
-
-async def handle_websocket_client(websocket, path):
-    """Handle WebSocket connections and commands"""
-    websocket_clients.add(websocket)
-    print(f"WebSocket client connected: {websocket.remote_address}")
+    # Register signal handlers
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        asyncio.get_event_loop().add_signal_handler(sig, signal_handler)
     
     try:
-        async for message in websocket:
-            try:
-                data = json.loads(message)
-                command = data.get("command")
-                params = data.get("params", {})
-                
-                if command == "manual_fsp":
-                    general = params.get("general", True)
-                    result = dc.trigger_manual_fsp(general)
-                    
-                    response = {
-                        "type": "command_response",
-                        "command": "manual_fsp",
-                        "result": result,
-                        "success": result.get("success", True),
-                    }
-                    await websocket.send(json.dumps(response))
-                else:
-                    error_response = {
-                        "type": "error",
-                        "message": f"Unknown command: {command}",
-                    }
-                    await websocket.send(json.dumps(error_response))
-                    
-            except json.JSONDecodeError:
-                error_response = {
-                    "type": "error",
-                    "message": "Invalid JSON message",
-                }
-                await websocket.send(json.dumps(error_response))
-            except Exception as e:
-                error_response = {
-                    "type": "error",
-                    "message": str(e),
-                }
-                await websocket.send(json.dumps(error_response))
-                
-    except Exception as e:
-        print(f"WebSocket error: {e}")
-    finally:
-        websocket_clients.discard(websocket)
-        print(f"WebSocket client disconnected: {websocket.remote_address}")
-
-def start_websocket_server():
-    """Start WebSocket server in its own thread"""
-    def run_websocket():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        # Start the server
+        await server.start()
         
-        async def start_server():
-            server = await websockets.server.serve(
-                handle_websocket_client,
-                "localhost",
-                8765,
-                ping_interval=None,
-                ping_timeout=None,
-            )
-            print("WebSocket server started on ws://localhost:8765")
-            
-            # Start periodic FSP updates
-            asyncio.create_task(periodic_fsp_updates())
-            
-            await server.wait_closed()
-        
-        try:
-            loop.run_until_complete(start_server())
-        except Exception as e:
-            print(f"WebSocket server error: {e}")
-        finally:
-            loop.close()
-    
-    websocket_thread = threading.Thread(target=run_websocket, daemon=True)
-    websocket_thread.start()
-
-async def run_datacenter():
-    """Run the main datacenter loop"""
-    global dc, shutdown_flag, current_cell_name
-    try:
-        print("Datacenter is starting up...")
-        dc = ProtoDatacenter()
-        
-        # Generate unique cell name and auto-load topology
+        # Generate and load topology
         cell_name = get_unique_name()
         topology_yaml = create_topology_yaml(cell_name)
-        current_cell_name = cell_name
-        
         print(f"Generated unique cell name: {cell_name}")
         print("Loading topology from generated config...")
-        await load_topology_from_string(dc, topology_yaml)
+        await load_topology_from_string(server.dc, topology_yaml)
         
-        while not shutdown_flag:
-            sleep(0.1)
-            
-    except KeyboardInterrupt:
-        print("Received interrupt signal")
+        print("DataCenter server is running...")
+        print("Press Ctrl+C to stop the server.")
+        
+        # Wait for shutdown
+        await server.shutdown_event.wait()
+        
+    except Exception as e:
+        print(f"Server error: {e}")
     finally:
-        if not shutdown_flag:
-            shutdown_datacenter()
+        await server.stop()
 
 if __name__ == "__main__":
-    # Start datacenter in a separate thread
-    datacenter_thread = threading.Thread(
-        target=lambda: asyncio.run(run_datacenter()), 
-        daemon=True
-    )
-    datacenter_thread.start()
-    
-    # Start WebSocket server
-    start_websocket_server()
-    
-    # Start Flask server
-    print("Starting datacenter API server on http://localhost:6000")
-    print("Endpoints:")
-    print("  GET  /status      - Check datacenter status")
-    print("  POST /shutdown    - Shutdown datacenter")
-    print("  POST /manual_fsp  - Trigger manual FSP")
-    print("WebSocket server on ws://localhost:8765")
-    print("  - FSP status broadcasts (20Hz)")
-    print("  - manual_fsp command support")
-    app.run(host='0.0.0.0', port=6000, debug=False)
+    asyncio.run(main())
