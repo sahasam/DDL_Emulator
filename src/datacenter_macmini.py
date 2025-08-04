@@ -137,7 +137,8 @@ class DataCenterServer:
 
             elif command == 'manual_fsp':
                 try:
-                    result = self.dc.trigger_manual_fsp()
+                    cell_name = next(iter(self.dc.cells))
+                    result = self.dc.trigger_manual_fsp(cell_name)
                     return result
                 except Exception as e:
                     return {"success": False, "message": f"Manual FSP failed: {str(e)}"}
