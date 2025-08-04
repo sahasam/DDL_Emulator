@@ -727,7 +727,6 @@ class ProtoDatacenter:
             return {'success': True, 'general': cell_id, 'result': result}
         except Exception as e:
             return {'success': False, 'message': f'Error triggering manual FSP: {e}'}
-  
 
     def get_all_fsp_status(self) -> dict:
         """Get FSP status from all cells"""

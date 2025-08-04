@@ -26,6 +26,8 @@ class DataCenterServer:
             self.websocket_clients.add(websocket)
             print(f"Client connected: {websocket.remote_address}")
 
+            self.periodic_task = asyncio.create_task(self.periodic_updates())
+
             try:
                 async for message in websocket:
                     print(f"Received message: {message}")
@@ -54,6 +56,9 @@ class DataCenterServer:
         """Stop the server and cleanup"""
         print("Stopping server...")
         self.shutdown_event.set()
+
+        if hasattr(self, 'periodic_task'):
+            self.periodic_task.cancel()
         
         if self.server:
             self.server.close()
@@ -149,9 +154,93 @@ class DataCenterServer:
                     return result
                 except Exception as e:
                     return {"success": False, "message": f"Get FSP status failed: {str(e)}"}
+            
+            elif command == "upload_topology":
+                try:
+                    filename = params["filename"]
+                    content = params["content"]
+
+                    import tempfile
+                    import os
+
+                    temp_dir = tempfile.gettempdir()
+                    file_path = os.path.join(temp_dir, f"uploaded_{filename}")
+
+                    with open(file_path, "w") as f:
+                        f.write(content)
+
+                    await self.teardown_all_cells()
+
+                    success = await self.dc.load_topology(file_path)
+
+                    os.remove(file_path)
+
+                    return {
+                        "success": (
+                            success.get("success", False)
+                            if isinstance(success, dict)
+                            else success
+                        ),
+                        "message": (
+                            success.get("message", "Topology uploaded successfully.")
+                            if isinstance(success, dict)
+                            else (
+                                "Topology uploaded successfully."
+                                if success
+                                else "Failed to upload topology."
+                            )
+                        ),
+                    }
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "message": f"Error uploading topology: {str(e)}",
+                    }
+            
+            elif command == "get_messages":
+                try:
+                    cell_id = params["cell_id"]
+                    from_cell = params.get("from_cell", None)
+                    result = self.dc.get_messages(cell_id, from_cell)
+                    return result
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "message": f"Get messages failed: {str(e)}",
+                    }
+
+            elif command == "broadcast_message":
+                try:
+                    cell_id = params["cell_id"]
+                    message = params["message"]
+                    result = self.dc.broadcast_message(cell_id, message)
+                    return result
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "message": f"Broadcast message failed: {str(e)}",
+                    }
+
+            elif command == "clear_messages":
+                try:
+                    cell_id = params["cell_id"]
+                    result = self.dc.clear_messages(cell_id)
+                    return result
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "message": f"Clear messages failed: {str(e)}",
+                    }
+            
+            
+            elif command == "get_topology":
+                result = self.dc.get_topology_status()
+                return result
 
             else:
                 return {"success": False, "message": f"Unknown command: {command}"}
+
+                
 
         except Exception as e:
             return {"success": False, "message": str(e)}
@@ -164,6 +253,59 @@ class DataCenterServer:
             print("All cells removed successfully.")
         except Exception as e:
             print(f"Error during teardown: {e}")
+    
+    async def broadcast_update(self, update_type, data):
+        if not self.websocket_clients:
+            return
+
+        message = {"type": update_type, "timestamp": time.time(), "data": data}
+
+        disconnected = set()
+        for client in list(self.websocket_clients):  # Create a copy to iterate over
+            try:
+                await client.send(json.dumps(message))
+            except websockets.exceptions.ConnectionClosed:
+                disconnected.add(client)
+            except Exception as e:
+                print(f"Error broadcasting to client: {e}")
+                disconnected.add(client)
+
+        self.websocket_clients -= disconnected
+
+            
+    async def periodic_updates(self):
+        """Send periodic updates - runs in the same event loop as WebSocket server"""
+        metrics_counter = 0
+        while True:
+            try:
+                # Send FSP updates every 50ms (20Hz)
+                try:
+                    fsp_status = self.dc.get_all_fsp_status()
+                    if fsp_status.get("success"):
+                        await self.broadcast_update("fsp_status_update", fsp_status["data"])
+                except Exception as e:
+                    print(f"Error getting FSP status: {e}")
+                
+                # Send metrics updates every 500ms (every 10th iteration)
+                metrics_counter += 1
+                if metrics_counter >= 10:
+                    all_metrics = {}
+                    for cell_id, proxy in self.dc.cells.items():
+                        try:
+                            metrics = proxy.get_metrics()
+                            all_metrics[cell_id] = metrics
+                        except Exception as e:
+                            all_metrics[cell_id] = {"error": "unreachable"}
+
+                    await self.broadcast_update("metrics_update", all_metrics)
+                    metrics_counter = 0
+
+                await asyncio.sleep(0.05)  # 50ms = 20Hz for FSP updates
+
+            except Exception as e:
+                print(f"Error in periodic update: {e}")
+                await asyncio.sleep(5)
+           
 
 def get_unique_name():
     """Generate a unique name for this machine"""
@@ -218,6 +360,7 @@ async def main():
     try:
         # Start the server
         await server.start()
+        
         
         # Generate and load topology
         cell_name = get_unique_name()

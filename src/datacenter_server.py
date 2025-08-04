@@ -343,7 +343,7 @@ class DataCenterServer:
                     result = self.dc.trigger_manual_fsp(general)
                     return result
                 except Exception as e:
-                    return {"success": False, "message": f"Manual FSP failed: {str(e)}"}
+                    return {"success": False, "message": f"Manual FSP failed: {e}"}
                 
             elif command == 'all_fsp_status':
                 try:
