@@ -48,14 +48,14 @@ def create_topology_yaml(cell_name, rpc_port=9000):
       addr: en2
 """
 
-def load_topology_from_string(dc, topology_yaml):
+async def load_topology_from_string(dc, topology_yaml):
     """Load topology from string by creating a temp file"""
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
         f.write(topology_yaml)
         temp_path = f.name
     
     try:
-        dc.load_topology(temp_path)
+        await dc.load_topology(temp_path)
     finally:
         os.unlink(temp_path)  # Clean up temp file
 
@@ -89,7 +89,10 @@ def restart_datacenter():
     restart_flag = True
     
     # Start new datacenter thread
-    datacenter_thread = threading.Thread(target=run_datacenter, daemon=True)
+    datacenter_thread = threading.Thread(
+        target=lambda: asyncio.run(run_datacenter()), 
+        daemon=True
+    )
     datacenter_thread.start()
     
     print("Datacenter restart initiated")
@@ -138,7 +141,7 @@ def status():
             "can_restart": current_cell_name is not None
         }), 503
 
-def run_datacenter():
+async def run_datacenter():
     """Run the main datacenter loop"""
     global dc, shutdown_flag, restart_flag, current_cell_name, current_topology_yaml
     try:
@@ -163,7 +166,7 @@ def run_datacenter():
             print(f"Generated unique cell name: {cell_name}")
         
         print("loading topology from generated config...")
-        load_topology_from_string(dc, topology_yaml)
+        await load_topology_from_string(dc, topology_yaml)
         
         while not shutdown_flag:
             sleep(0.1)
@@ -176,8 +179,12 @@ def run_datacenter():
 
 if __name__ == "__main__":
     # Start datacenter in a separate thread
-    datacenter_thread = threading.Thread(target=run_datacenter, daemon=True)
+    datacenter_thread = threading.Thread(
+        target=lambda: asyncio.run(run_datacenter()), 
+        daemon=True
+    )
     datacenter_thread.start()
+    
     
     # Start Flask server
     print("Starting datacenter API server on http://localhost:6000")
