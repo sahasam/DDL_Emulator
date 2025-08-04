@@ -1,0 +1,22 @@
+topology:
+  cells:
+    - id: alice
+      rpc_port: 9000
+      host: "localhost"
+
+  bindings:
+    - cell_id: alice
+      portname: en3
+      addr: en3
+    
+    - cell_id: alice
+      portname: en2
+      addr: en2
+    
+    - cell_id: alice
+      portname: en4
+      addr: en4
+
+
+  
+     

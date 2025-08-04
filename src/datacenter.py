@@ -741,6 +741,15 @@ class ProtoDatacenter:
                 statuses[cell_id] = {'error': str(e)}
         
         return {"success": True, "data": statuses}
+    
+    def teardown(self) -> dict:
+        """Teardown all cells"""
+        for cell_id in self.cells:
+            try:
+                result = self.cells[cell_id].shutdown()
+                return {'success': True, 'result': result}
+            except Exception as e:
+                return {'success': False, 'result': str(e)}
 
 def help():
     print("Datacenter Controller")
