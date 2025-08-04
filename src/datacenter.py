@@ -4,7 +4,6 @@ import subprocess
 import time
 import tempfile
 import os
-import traceback
 import yaml
 import asyncio
 
@@ -270,7 +269,6 @@ class ProtoDatacenter:
 
         except Exception as e:
             print(f"Failed to check status: {e}")
-            traceback.print_exc()
             return {"success": False, "message": f"Failed to check status: {e}"}
 
     def check_port_status(self, cell_id, port_name) -> dict:
@@ -421,7 +419,6 @@ class ProtoDatacenter:
             return {"success": True, **metrics}
         except Exception as e:
             print(f"Failed to get metrics for cell {cell_id}: {e}")
-            traceback.print_exc()
             return {
                 "success": False,
                 "message": f"Failed to get metrics for cell {cell_id}: {e}",
@@ -520,14 +517,13 @@ class ProtoDatacenter:
                 cell_id = cell_bindings["cell_id"]
                 port_name = cell_bindings["portname"]
                 addr = cell_bindings.get("addr", {})
-                self.cells[cell_id].bind_port(port_name, addr)
+                result = self.cells[cell_id].bind_port(port_name, {"interface": addr})
 
             print("--- Topology Loaded Successfully ---")
             return {"success": True, "message": "Topology loaded successfully."}
 
         except Exception as e:
             print(f"Failed to load topology from {topology_file}: {e}")
-            traceback.print_exc()
             return {"success": False, "message": f"Failed to load topology: {e}"}
 
     def _configure_link_from_config(self, link_config, link_index):

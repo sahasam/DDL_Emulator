@@ -173,8 +173,7 @@ class Cell(FSPTopologyMixin):
         except Exception as e:
 
             self.logger.info(f"Error creating port {port_name}: {e}")
-            import traceback
-            traceback.self.logger.info_exc()
+
             return f"Error binding {port_name}: {str(e)}"
 
     def unbind_port(self, port_name):
