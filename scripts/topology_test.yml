@@ -1,0 +1,62 @@
+# Multi-Mac Mini Physical Interface Topology
+topology:
+  cells:
+    # Local cell on your computer
+    - id: local_alice
+      rpc_port: 9000
+      host: "localhost"
+    
+    # Remote Mac Mini cells
+    - id: remote_bob
+      rpc_port: 9001
+      host: "10.0.1.34"
+    
+    - id: remote_sam
+      rpc_port: 9002
+      host: "10.0.1.31"
+
+    - id: remote_charlie
+      rpc_port: 9003
+      host: "10.0.1.32"
+      
+  links:
+    # PHYSICAL INTERFACE: Your computer to Bob (Mac Mini 1)
+    - cell1: local_alice
+      port1: physical_to_bob
+      cell2: remote_bob
+      port2: physical_from_alice
+      transport: interface
+      config:
+        interface1: "en2"    # Your computer's Thunderbolt interface
+        interface2: "en2"    # Bob's Thunderbolt interface
+    
+    # PHYSICAL INTERFACE: Your computer to Sam (Mac Mini 2) 
+    - cell1: local_alice
+      port1: physical_to_sam
+      cell2: remote_sam
+      port2: physical_from_alice
+      transport: interface
+      config:
+        interface1: "en1"    # Your computer's second Thunderbolt interface
+        interface2: "en2"    # Sam's Thunderbolt interface
+    
+    # PHYSICAL INTERFACE: Bob to Sam (Mac Mini to Mac Mini)
+    - cell1: remote_bob
+      port1: physical_to_sam
+      cell2: remote_sam
+      port2: physical_from_bob
+      transport: interface
+      config:
+        interface1: "en3"    # Bob's second Thunderbolt interface
+        interface2: "en3"    # Sam's second Thunderbolt interface
+
+
+    # PHYSICAL INTERFACE: Charlie to Bob (Mac Mini to Mac Mini)
+    - cell1: remote_charlie
+      port1: physical_to_sam
+      cell2: remote_sam
+      port2: physical_from_charlie
+      transport: interface
+      config:
+        interface1: "en4"
+        interface2: "en4"

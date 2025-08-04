@@ -1,0 +1,238 @@
+# Complex Network Topology - 10 Cells
+# This creates a realistic network with multiple topological patterns:
+# - Ring topology (cells 1-5)
+# - Star topology (cell6 as hub for cells 7-10)
+# - Inter-cluster connections
+# - Redundant paths for fault tolerance
+
+topology:
+  cells:
+    # Core Ring Network (5 cells)
+    - id: core1
+      rpc_port: 9000
+      host: "localhost"
+    - id: core2
+      rpc_port: 9001
+      host: "localhost"
+    - id: core3
+      rpc_port: 9002
+      host: "localhost"
+    - id: core4
+      rpc_port: 9003
+      host: "localhost"
+    - id: core5
+      rpc_port: 9004
+      host: "localhost"
+      
+    # Hub and Edge Network (5 cells)
+    - id: hub6
+      rpc_port: 9005
+      host: "localhost"
+    - id: edge7
+      rpc_port: 9006
+      host: "localhost"
+    - id: edge8
+      rpc_port: 9007
+      host: "localhost"
+    - id: edge9
+      rpc_port: 9008
+      host: "localhost"
+    - id: edge10
+      rpc_port: 9009
+      host: "localhost"
+      
+  links:
+    # === CORE RING TOPOLOGY ===
+    # Creates a bidirectional ring: core1 -> core2 -> core3 -> core4 -> core5 -> core1
+    
+    # core1 ↔ core2
+    - cell1: core1
+      port1: port1
+      cell2: core2
+      port2: port1
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5000:5001"
+        addr2: "127.0.0.1:5001:5000"
+        
+    # core2 ↔ core3
+    - cell1: core2
+      port1: port2
+      cell2: core3
+      port2: port1
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5002:5003"
+        addr2: "127.0.0.1:5003:5002"
+        
+    # core3 ↔ core4
+    - cell1: core3
+      port1: port2
+      cell2: core4
+      port2: port1
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5004:5005"
+        addr2: "127.0.0.1:5005:5004"
+        
+    # core4 ↔ core5
+    - cell1: core4
+      port1: port2
+      cell2: core5
+      port2: port1
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5006:5007"
+        addr2: "127.0.0.1:5007:5006"
+        
+    # core5 ↔ core1 (completes the ring)
+    - cell1: core5
+      port1: port2
+      cell2: core1
+      port2: port2
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5008:5009"
+        addr2: "127.0.0.1:5009:5008"
+        
+    # === STAR TOPOLOGY (Hub6 with 4 edges) ===
+    
+    # hub6 ↔ edge7
+    - cell1: hub6
+      port1: port1
+      cell2: edge7
+      port2: port1
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5010:5011"
+        addr2: "127.0.0.1:5011:5010"
+        
+    # hub6 ↔ edge8
+    - cell1: hub6
+      port1: port2
+      cell2: edge8
+      port2: port1
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5012:5013"
+        addr2: "127.0.0.1:5013:5012"
+        
+    # hub6 ↔ edge9
+    - cell1: hub6
+      port1: port3
+      cell2: edge9
+      port2: port1
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5014:5015"
+        addr2: "127.0.0.1:5015:5014"
+        
+    # hub6 ↔ edge10
+    - cell1: hub6
+      port1: port4
+      cell2: edge10
+      port2: port1
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5016:5017"
+        addr2: "127.0.0.1:5017:5016"
+        
+    # === INTER-CLUSTER CONNECTIONS ===
+    # Connect the ring to the star topology
+    
+    # core1 ↔ hub6 (primary inter-cluster link)
+    - cell1: core1
+      port1: port3
+      cell2: hub6
+      port2: port5
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5018:5019"
+        addr2: "127.0.0.1:5019:5018"
+        
+    # core3 ↔ hub6 (secondary inter-cluster link for redundancy)
+    - cell1: core3
+      port1: port3
+      cell2: hub6
+      port2: port6
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5020:5021"
+        addr2: "127.0.0.1:5021:5020"
+        
+    # === REDUNDANT PATHS ===
+    # Add some direct connections between edge nodes for fault tolerance
+    
+    # edge7 ↔ edge8 (backup path)
+    - cell1: edge7
+      port1: port2
+      cell2: edge8
+      port2: port2
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5022:5023"
+        addr2: "127.0.0.1:5023:5022"
+        
+    # edge9 ↔ edge10 (backup path)
+    - cell1: edge9
+      port1: port2
+      cell2: edge10
+      port2: port2
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5024:5025"
+        addr2: "127.0.0.1:5025:5024"
+        
+    # === CROSS-RING SHORTCUT ===
+    # Direct connection across the ring for faster routing
+    
+    # core2 ↔ core5 (ring diagonal)
+    - cell1: core2
+      port1: port3
+      cell2: core5
+      port2: port3
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5026:5027"
+        addr2: "127.0.0.1:5027:5026"
+        
+    # === EDGE-TO-CORE DIRECT LINKS ===
+    # Some edge nodes have direct access to core for critical paths
+    
+    # edge7 ↔ core2 (critical path)
+    - cell1: edge7
+      port1: port3
+      cell2: core2
+      port2: port4
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5028:5029"
+        addr2: "127.0.0.1:5029:5028"
+        
+    # edge10 ↔ core4 (critical path)
+    - cell1: edge10
+      port1: port3
+      cell2: core4
+      port2: port3
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5030:5031"
+        addr2: "127.0.0.1:5031:5030"
+
+# Network Properties:
+# - Total Cells: 10
+# - Total Links: 16
+# - Redundancy: Multiple paths between most nodes
+# - Fault Tolerance: Can survive multiple link/node failures
+# - Realistic: Mimics real network topologies (ring + star + mesh elements)
+#
+# Routing Paths Examples:
+# - core1 -> core4: direct ring path (3 hops) or via shortcuts (2 hops)
+# - edge7 -> edge10: via hub6 (2 hops) or via core network (4+ hops)
+# - edge8 -> core5: multiple possible paths for load balancing
+#
+# Good for testing:
+# - Fault injection on critical links (core1-hub6, hub6-edge7)
+# - Load balancing across redundant paths
+# - Network convergence after failures
+# - Spanning tree algorithms

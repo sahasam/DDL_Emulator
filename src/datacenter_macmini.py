@@ -208,6 +208,21 @@ class DataCenterServer:
                         "success": False,
                         "message": f"Get messages failed: {str(e)}",
                     }
+            
+            elif command == "restart":
+                try:
+                    # Teardown all current cells first
+                    for cell_id in list(self.dc.cells.keys()):
+                        await self.dc.remove_cell(cell_id)
+                    
+                    # Generate new topology
+                    cell_name = get_unique_name()  # ← Use cell_name consistently
+                    topology_yaml = create_topology_yaml(cell_name)
+                    await load_topology_from_string(self.dc, topology_yaml)
+                    return {"success": True, "message": f"Datacenter restarted successfully with cell: {cell_name}"}
+                
+                except Exception as e:
+                    return {"success": False, "message": f"Restart failed: {str(e)}"}
 
             elif command == "broadcast_message":
                 try:

@@ -1,0 +1,43 @@
+# Local Test Topology - All cells on localhost
+
+topology:
+  cells:
+    # Three cells all running locally
+    - id: alice
+      rpc_port: 9000
+      host: "localhost"
+    - id: bob
+      rpc_port: 9001
+      host: "localhost"
+    - id: charlie
+      rpc_port: 9002
+      host: "localhost"
+      
+  links:
+    # UDP link between alice and bob (local)
+    - cell1: alice
+      port1: port1
+      cell2: bob
+      port2: port1
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5000:5001"
+        addr2: "127.0.0.1:5001:5000"
+        
+    # Auto-assigned UDP link between bob and charlie
+    - cell1: bob
+      port1: port2
+      cell2: charlie
+      port2: port1
+      transport: udp
+      # No config - will auto-assign ports
+        
+    # Another UDP link (alice to charlie)
+    - cell1: alice
+      port1: port2
+      cell2: charlie
+      port2: port2
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5004:5005"  # Changed from 5002:5003
+        addr2: "127.0.0.1:5005:5004"  # Changed from 5003:5002

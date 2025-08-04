@@ -1,0 +1,60 @@
+# Linear Topology - 5 Cells on localhost
+
+topology:
+  cells:
+    - id: alice
+      rpc_port: 9000
+      host: "localhost"
+    - id: bob
+      rpc_port: 9001
+      host: "localhost"
+    - id: charlie
+      rpc_port: 9002
+      host: "localhost"
+    - id: dave
+      rpc_port: 9003
+      host: "localhost"
+    - id: eve
+      rpc_port: 9004
+      host: "localhost"
+
+  links:
+    # alice <-> bob
+    - cell1: alice
+      port1: port1
+      cell2: bob
+      port2: port1
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5000:5001"
+        addr2: "127.0.0.1:5001:5000"
+
+    # bob <-> charlie
+    - cell1: bob
+      port1: port2
+      cell2: charlie
+      port2: port1
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5002:5003"
+        addr2: "127.0.0.1:5003:5002"
+
+    # charlie <-> dave
+    - cell1: charlie
+      port1: port2
+      cell2: dave
+      port2: port1
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5004:5005"
+        addr2: "127.0.0.1:5005:5004"
+
+    # dave <-> eve
+    - cell1: dave
+      port1: port2
+      cell2: eve
+      port2: port1
+      transport: udp
+      config:
+        addr1: "127.0.0.1:5006:5007"
+        addr2: "127.0.0.1:5007:5006"

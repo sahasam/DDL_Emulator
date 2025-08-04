@@ -6,16 +6,13 @@ topology:
 
   bindings:
     - cell_id: alice
-      portname: en3
-      addr: en3
+      portname: en1
+      addr: en1
     
     - cell_id: alice
       portname: en2
       addr: en2
     
-    - cell_id: alice
-      portname: en4
-      addr: en4
 
 
   
