@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-cell.py - individual cell that can be controlled via XML - RPC
+cell.py - individual unit of compute that can be controlled via XML - RPC
 """
 
 from xmlrpc.server import SimpleXMLRPCServer

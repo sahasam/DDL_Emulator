@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-A lightweight daemon to facilitate the creation of cells. 
+A lightweight daemon to facilitate the creation of cells. DEPRECATED
 """
 import subprocess
 from xmlrpc.server import SimpleXMLRPCServer

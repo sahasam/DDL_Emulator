@@ -1,17 +1,19 @@
 import asyncio
 import json
 import websockets.server
-from datacenter import ProtoDatacenter
+from hermes.datacenter import Datacenter
 from typing import Set
 import threading
 import time
 
-
-class DataCenterServer:
+"""
+DatacenterServer - Creates a WebSocket interface for interacting with a computer
+"""
+class DatacenterServer:
     def __init__(self, host="localhost", port=8765):
         self.host = host
         self.port = port
-        self.dc = ProtoDatacenter()
+        self.dc = Datacenter()
         self.websocket_clients: Set = set()
 
     def __del__(self):
@@ -420,7 +422,7 @@ class DataCenterServer:
                 await asyncio.sleep(5)
                 
 def main():
-    server = DataCenterServer()
+    server = DatacenterServer()
     server.start()
 
     print("DataCenter server is running...")

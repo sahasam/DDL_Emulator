@@ -1,50 +1,28 @@
-import socket
 import xmlrpc.client
-import subprocess
 import time
-import tempfile
 import os
 import yaml
 import asyncio
 
 
-class ProtoDatacenter:
+class Datacenter:
     def __init__(self):
         self.cells = {}
         self.processes = {}
-        self.cell_managers = {}
         self.cell_locations = {}
         self.links = {}
 
-    def _get_cell_manager(self, host):
-        """Get/create connections to cell manager on host"""
 
-        if host not in self.cell_managers:
-            url = f"http://{host}:8000"
-            try:
-                self.cell_managers[host] = xmlrpc.client.ServerProxy(url)
-                self.cell_managers[host].list_cells()  # Test connection
-                print(f"Connected to cell manager at {url}")
 
-            except Exception as e:
-                print(f"Failed to connect to cell manager at {url}: {e}")
-                raise
 
-        return self.cell_managers[host]
-
-    def _is_local_host(self, host):
-        """Check if host refers to local machine"""
-        return host in ["localhost", "127.0.0.1", "::1"]
-
-    async def _add_local_cell(
-        self, cell_id: str, rpc_port: int, host="localhost"
-    ) -> dict:
-        """Add a cell either locally or remotely"""
+    async def add_cell(self, cell_id: str, rpc_port: int,) -> dict:
+        """Connects to a cell"""
         try:
-            cell_script = "src/cell.py"
+            module_path = "hermes.datacenter.cell"
             cmd = [
                 "python3",
-                cell_script,
+                "-m",
+                module_path,
                 "--cell-id",
                 cell_id,
                 "--rpc-port",
@@ -63,8 +41,9 @@ class ProtoDatacenter:
 
             self.processes[cell_id] = {"process": process, "log_file": log_file}
 
-            # Give the process a moment to start
+            # give a moment to start
             await asyncio.sleep(1.0)
+            
             if process.returncode is not None:
                 try:
                     with open(log_file, "r") as f:
@@ -91,60 +70,15 @@ class ProtoDatacenter:
             self.cell_locations[cell_id] = host
 
             return {"success": True, "message": f"Cell {cell_id} added successfully."}
-
+        
         except Exception as e:
-            print(f"Failed to connect to cell {cell_id} at port {rpc_port}: {e}")
-            return {
-                "success": False,
-                "message": f"Failed to connect to cell {cell_id} at port {rpc_port}: {e}",
-            }
-
-    def _add_remote_cell(self, cell_id: str, rpc_port: int, host: str) -> dict:
-        """Add cell on a remote Mac Mini"""
-        try:
-            cell_manager = self._get_cell_manager(host)
-
-            print(f"Starting remote cell {cell_id} on {host} at port {rpc_port}")
-            result = cell_manager.start_cell(cell_id, rpc_port)
-            print(f"Remote cell manager response: {result}")
-
-            time.sleep(2)
-
-            url = f"http://{host}:{rpc_port}"
-            proxy = xmlrpc.client.ServerProxy(url)
-
-            heartbeat_result = proxy.heartbeat()
-            print(
-                f"Connected to remote cell {cell_id} at {host}:{rpc_port}: {heartbeat_result}"
-            )
-
-            self.cells[cell_id] = proxy
-            self.cell_locations[cell_id] = host
-
-            return {
-                "success": True,
-                "message": f"Cell {cell_id} added successfully on {host}.",
-            }
-
-        except Exception as e:
-            print(
-                f"Failed to create local "
-                f"cell {cell_id} on {host} at port {rpc_port}: {e}"
-            )
-
-    async def add_cell(self, cell_id: str, rpc_port: int, host="localhost") -> dict:
-        """Connects to a cell"""
-        if self._is_local_host(host):
-            return await self._add_local_cell(cell_id, rpc_port, host)
-        else:
-            return self._add_remote_cell(cell_id, rpc_port, host)
-
+            return {"success": False, "message": f"Cell {cell_id} could not be added successfully {e}"}
+    
     async def remove_cell(self, cell_id: int) -> dict:
         """Remove and shutdown a cell"""
         if cell_id not in self.cell_locations:
             return {"success": False, "message": f"Cell {cell_id} is not connected."}
 
-        host = self.cell_locations[cell_id]
 
         try:
             if cell_id in self.cells:
@@ -155,11 +89,8 @@ class ProtoDatacenter:
                 finally:
                     del self.cells[cell_id]
 
-            if self._is_local_host(host):
                 return await self._remove_local_cell(cell_id)
-            else:
-                return self._remove_remote_cell(cell_id, host)
-
+        
         except Exception as e:
             print(f"Error removing cell {cell_id}: {e}")
             return {"success": False, "message": f"Error removing cell {cell_id}: {e}"}
@@ -189,27 +120,7 @@ class ProtoDatacenter:
             "message": f"Local cell {cell_id} removed successfully.",
         }
 
-    def _remove_remote_cell(self, cell_id: str, host: str) -> dict:
-        """Remove remote cell via cell manager"""
-        try:
-            cell_manager = self._get_cell_manager(host)
-            result = cell_manager.stop_cell(cell_id)
-            print(f"Remote cell manager response: {result}")
-
-            if cell_id in self.cell_locations:
-                del self.cell_locations[cell_id]
-
-            return {
-                "success": True,
-                "message": f"Remote cell {cell_id} removed successfully.",
-            }
-
-        except Exception as e:
-            print(f"Failed to remove remote cell {cell_id} on {host}: {e}")
-            return {
-                "success": False,
-                "message": f"Failed to remove remote cell {cell_id} on {host}: {e}",
-            }
+ 
 
     def create_link(
         self, cell1_id, port1_name, cell2_id, port2_name, port1_addr, port2_addr
@@ -250,7 +161,7 @@ class ProtoDatacenter:
             }
 
     def check_status(self):
-        """Check status of all cells (local and remote)"""
+        """Check status of all cells"""
         print("\n--- Cell Status ---")
         output = ["--- Cell Status ---"]
         try:
@@ -292,6 +203,8 @@ class ProtoDatacenter:
             }
 
     def bind_port(self, cell_id: str, port_name: str, addr: str) -> dict:
+        """Lets a cell connect to a port (virtual UDP or enX interface)"""
+        
         if cell_id not in self.cells:
             print(f"Cell {cell_id} is not connected.")
             return {"success": False, "message": f"Cell {cell_id} is not connected."}
@@ -321,6 +234,7 @@ class ProtoDatacenter:
             }
 
     def unbind_port(self, cell_id: str, port_name: str) -> dict:
+        """Disconnects a cell from a port"""
         if cell_id not in self.cells:
             print(f"Cell {cell_id} is not connected.")
             return {"success": False, "message": f"Cell {cell_id} is not connected."}
@@ -472,7 +386,7 @@ class ProtoDatacenter:
             }
 
     async def load_topology(self, topology_file) -> dict:
-        """Load topology with support for remote hosts"""
+        """Load a datacenter with a preconfigured topology of cells, preconfigured links, and bindings"""
         try:
             with open(topology_file, "r") as f:
                 config = yaml.safe_load(f)
@@ -484,10 +398,9 @@ class ProtoDatacenter:
             for cell_config in topology.get("cells", []):
                 cell_id = cell_config["id"]
                 rpc_port = cell_config["rpc_port"]
-                host = cell_config.get("host", "localhost")  # Default to localhost
 
-                print(f"Scheduling cell {cell_id} creation on {host}:{rpc_port}")
-                tasks.append(self.add_cell(cell_id, rpc_port, host))
+                print(f"Scheduling cell {cell_id} creation on localhost:{rpc_port}")
+                tasks.append(self.add_cell(cell_id, rpc_port))
 
             results = await asyncio.gather(*tasks)
 
@@ -527,7 +440,7 @@ class ProtoDatacenter:
             return {"success": False, "message": f"Failed to load topology: {e}"}
 
     def _configure_link_from_config(self, link_config, link_index):
-        """Create links based on transport type with host validation"""
+        """Helper method to create links based on different transport (enX or virtual udp)"""
         cell1 = link_config["cell1"]
         port1 = link_config["port1"]
         cell2 = link_config["cell2"]
@@ -554,13 +467,6 @@ class ProtoDatacenter:
 
     def _configure_udp_link(self, cell1, port1, cell2, port2, config, link_index):
         """Create a UDP link between two cells (must be on same host)"""
-        # Validate both cells are on same host
-        host1 = self.cell_locations.get(cell1)
-        host2 = self.cell_locations.get(cell2)
-
-        # if host1 != host2:
-        #     print(f"ERROR: UDP links only work between cells on the same host. {cell1} is on {host1}, {cell2} is on {host2}")
-        #     return False
 
         if "addr1" in config and "addr2" in config:
             addr1 = config["addr1"]
@@ -572,7 +478,7 @@ class ProtoDatacenter:
 
         return self.create_link(cell1, port1, cell2, port2, addr1, addr2)
 
-    def _configure_interface_link(self, cell1, port1, cell2, port2, config, link_index):
+    def _configure_interface_link(self, cell1: str, port1: str, cell2: str, port2: str, config: str, link_index: str):
         """Create a network interface link (can work across hosts)"""
         interface1 = config.get("interface1", f"en0")
         interface2 = config.get("interface2", f"en1")
@@ -593,7 +499,8 @@ class ProtoDatacenter:
         except Exception as e:
             print(f"Failed to create interface link between {cell1} and {cell2}: {e}")
             return False
-    def broadcast_message(self, from_cell_id, payload) -> dict:
+        
+    def broadcast_message(self, from_cell_id: str, payload: str) -> dict:
         """Broadcast message from one cell to all other cells"""
         if from_cell_id not in self.cells:
             return {'success': False, 'message': f'Source cell {from_cell_id} not connected'}
@@ -606,7 +513,7 @@ class ProtoDatacenter:
         
         return {'success': True, 'message': f'Broadcast from {from_cell_id} to {len(results)} cells', 'results': results}
     
-    def get_messages(self, cell_id, from_node=None) -> dict:
+    def get_messages(self, cell_id: str, from_node=None) -> dict:
         """Get messages from a cell"""
         if cell_id not in self.cells:
             return {'success': False, 'message': f'Cell {cell_id} not connected'}
@@ -629,7 +536,8 @@ class ProtoDatacenter:
         except Exception as e:
             print(f"Failed to get messages from {cell_id}: {e}")
             return {'success': False, 'message': f'Failed to get messages: {e}'}
-    def clear_messages(self, cell_id) -> dict:
+        
+    def clear_messages(self, cell_id: str) -> dict:
         """Clear all messages from a cell"""
         if cell_id not in self.cells:
             return {'success': False, 'message': f'Cell {cell_id} not connected'}
@@ -648,7 +556,7 @@ class ProtoDatacenter:
             print(f"Failed to clear messages from {cell_id}: {e}")
             return {'success': False, 'message': f'Failed to clear messages: {e}'}
 
-    def pop_message(self, cell_id) -> dict:
+    def pop_message(self, cell_id: str) -> dict:
         """Get and remove oldest message from a cell"""
         if cell_id not in self.cells:
             return {'success': False, 'message': f'Cell {cell_id} not connected'}
@@ -671,7 +579,7 @@ class ProtoDatacenter:
             print(f"Failed to pop message from {cell_id}: {e}")
             return {'success': False, 'message': f'Failed to pop message: {e}'}
     
-    def send_message(self, from_cell_id, to_cell_id, payload) -> dict:
+    def send_message(self, from_cell_id: str, to_cell_id: str, payload: str) -> dict:
         """Send message from one cell to another"""
         if from_cell_id not in self.cells:
             return {'success': False, 'message': f'Source cell {from_cell_id} not connected'}
@@ -687,7 +595,7 @@ class ProtoDatacenter:
     def get_topology_status(self) -> dict:
         """Get current topology status including host information"""
         try:
-            status = {"cells": {}, "cell_managers": {}, "links": len(self.links)}
+            status = {"cells": {}, "links": len(self.links)}
 
             # Cell status with host info
             for cell_id, proxy in self.cells.items():
@@ -702,22 +610,12 @@ class ProtoDatacenter:
                 except:
                     status["cells"][cell_id] = {"host": host, "status": "unreachable"}
 
-            for host, manager in self.cell_managers.items():
-                try:
-                    cells = manager.list_cells()
-                    status["cell_managers"][host] = {
-                        "status": "connected",
-                        "managed_cells": cells,
-                    }
-                except:
-                    status["cell_managers"][host] = {"status": "unreachable"}
-
             return {"success": True, "data": status}
 
         except Exception as e:
             return {"success": False, "message": f"Failed to get topology status: {e}"}
 
-    def trigger_manual_fsp(self, cell_id) -> dict:
+    def trigger_manual_fsp(self, cell_id: str) -> dict:
         """Manually trigger FSP with specified cell as general"""
         if cell_id not in self.cells:
             return {'success': False, 'message': f'Cell {cell_id} not connected'}
@@ -780,7 +678,7 @@ def help():
 
 
 async def main():
-    dc = ProtoDatacenter()
+    dc = Datacenter()
 
     help()
 

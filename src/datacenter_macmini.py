@@ -2,7 +2,7 @@ import asyncio
 import json
 import websockets.server
 import tempfile
-from datacenter import ProtoDatacenter
+from hermes.datacenter import Datacenter
 from typing import Set
 import threading
 import time
@@ -11,11 +11,15 @@ import uuid
 import os
 import signal
 
-class DataCenterServer:
+"""
+MacMiniServer - Creates a WebSocket interface for interacting with a macmini. Loaded with a preconfigured interface specifically made for a mac mini.
+"""
+
+class MacMiniServer:
     def __init__(self, host="localhost", port=8765):
         self.host = host
         self.port = port
-        self.dc = ProtoDatacenter()
+        self.dc = Datacenter()
         self.websocket_clients: Set = set()
         self.shutdown_event = asyncio.Event()
         self.server = None
@@ -360,7 +364,7 @@ async def load_topology_from_string(dc, topology_yaml):
         os.unlink(temp_path)
 
 async def main():
-    server = DataCenterServer()
+    server = MacMiniServer()
     
     # Setup signal handlers for graceful shutdown
     def signal_handler():
