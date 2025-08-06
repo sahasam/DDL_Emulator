@@ -16,15 +16,16 @@ from hermes.sim.FSPTopologyMixin import FSPTopologyMixin
 cell.py - individual unit of compute that can be controlled via XML - RPC
 """
 
-class Cell(FSPTopologyMixin):
+class Cell(): # removed the Mixin
     def __init__(self, cell_id, rpc_port, bind_addr="localhost"):
         super().__init__()
 
         self.cell_id = cell_id
         self.rpc_port = rpc_port
         self.logger = logging.getLogger(f"Cell-{cell_id}")
-        self.logger.disabled = True
 
+        self.logger.disabled = True
+        self.logger.disabled = True
         self.sim = None
         self.rpc_server = None
         self.running = False
@@ -130,7 +131,32 @@ class Cell(FSPTopologyMixin):
         
         rpc_thread = threading.Thread(target=run_server, daemon=True)
         rpc_thread.start()   
+        
+    def get_fsp_status(self):
+        return self.agent.get_fsp_status()
+    
+    def trigger_manual_fsp_as_general(self):  # REMOVE 'async'
+        """Start FSP with this cell as general"""
+        self.logger.info("Received command to start as general.")
+        
+        try:
+            # Check if agent loop is available
+            if not hasattr(self, 'agent_loop') or self.agent_loop.is_closed():
+                return {"success": False, "message": "Agent event loop not available"}
             
+            # Run the async method in the agent's event loop
+            future = asyncio.run_coroutine_threadsafe(
+                self.agent.start_fsp_as_general(),  # This is the async method
+                self.agent_loop
+            )
+            
+            result = future.result(timeout=15)
+            return "Successfully started general!"
+        except asyncio.TimeoutError:
+            return "FSP start command timed out"
+        except Exception as e:
+            return f"Error starting FSP {e}"
+
     def bind_port(self, port_name, port_config):
         """Bind a new port"""
         try:

@@ -101,7 +101,7 @@ class Sim:
                     'propagate': False,
                 },
                 'Protocol': {
-                    'level': 'INFO',
+                    'level': 'ERROR',
                     'handlers': ['console', 'port_log'],
                     'propagate': False,
                 },

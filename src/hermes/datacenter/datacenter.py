@@ -10,17 +10,13 @@ class Datacenter:
         self.cell_locations = {}
         self.links = {}
 
-
-
-
     async def add_cell(self, cell_id: str, rpc_port: int,) -> dict:
         """Connects to a cell"""
         try:
-            module_path = "hermes.datacenter.cell"
+            module_path = "src/hermes/datacenter/cell.py"
             cmd = [
                 "python3",
-                "-m",
-                module_path,
+                "-m", "hermes.datacenter.cell",  # Run as module
                 "--cell-id",
                 cell_id,
                 "--rpc-port",
@@ -614,7 +610,9 @@ class Datacenter:
             return {"success": False, "message": f"Failed to get topology status: {e}"}
 
     def trigger_manual_fsp(self, cell_id: str) -> dict:
-        """Manually trigger FSP with specified cell as general (ASSUMES TOPOLOGY IS LINEAR)"""
+        """
+        Manually trigger FSP with specified cell as general (ASSUMES TOPOLOGY IS LINEAR)
+        """
         if cell_id not in self.cells:
             return {'success': False, 'message': f'Cell {cell_id} not connected'}
         
@@ -657,179 +655,180 @@ class Datacenter:
         return dc
         
 
-# def help():
-#     print("Datacenter Controller")
-#     print("Commands:")
-#     print("  add <cell_id> <rpc_port> [<host>]")
-#     print("  remove <cell_id>")
-#     print("  link <cell1> <port1> <cell2> <port2> <addr1> <addr2>")
-#     print("  unlink <cell1> <port1> <cell2> <port2>")
-#     print("  status")
-#     print("  topology_status")
-#     print("  port <cell_id> <port_name>")
-#     print("  logs <cell_id>")
-#     print("  get_metrics <cell_id>")
-#     print("  inject_fault <cell_id> <port_name> <fault_type> [<args>]")
-#     print("      fault_type: drop|delay|disconnect")
-#     print("  clear_fault <cell_id> <port_name>")
-#     print("  lt <topology_file>")
-#     print("  send <from_cell> <to_cell> <message>")
-#     print("  messages <cell_id> [<from_node>]")
-#     print("  pop <cell_id>")
-#     print("  clear_messages <cell_id>")
-#     print("  broadcast <from_cell> <message>")
-#     print("  teardown")
-#     print("  cleanup")
-#     print("  establish_topology")
-#     print("  fsp_status")
-#     print(' clear_messages <cell_id>')
-#     print("  quit")
+def help():
+    print("Datacenter Controller")
+    print("Commands:")
+    print("  add <cell_id> <rpc_port> [<host>]")
+    print("  remove <cell_id>")
+    print("  link <cell1> <port1> <cell2> <port2> <addr1> <addr2>")
+    print("  unlink <cell1> <port1> <cell2> <port2>")
+    print("  status")
+    print("  topology_status")
+    print("  port <cell_id> <port_name>")
+    print("  logs <cell_id>")
+    print("  get_metrics <cell_id>")
+    print("  inject_fault <cell_id> <port_name> <fault_type> [<args>]")
+    print("      fault_type: drop|delay|disconnect")
+    print("  clear_fault <cell_id> <port_name>")
+    print("  lt <topology_file>")
+    print("  send <from_cell> <to_cell> <message>")
+    print("  messages <cell_id> [<from_node>]")
+    print("  pop <cell_id>")
+    print("  clear_messages <cell_id>")
+    print("  broadcast <from_cell> <message>")
+    print("  teardown")
+    print("  cleanup")
+    print("  establish_topology")
+    print("  fsp_status")
+    print(' clear_messages <cell_id>')
+    print("  quit")
 
 
-# async def main():
-#     dc = Datacenter()
+async def main():
+    dc = Datacenter()
 
-#     help()
+    help()
 
-#     while True:
-#         try:
-#             cmd = input("\n> ").strip().split()
+    while True:
+        try:
+            cmd = input("\n> ").strip().split()
 
-#             if not cmd:
-#                 continue
+            if not cmd:
+                continue
 
-#             if cmd[0] == "quit":
-#                 for process in dc.processes.values():
-#                     if process["process"].poll() is None:
-#                         process["process"].terminate()
-#                         process["process"].wait()
-#                         print(f"Terminated process for cell {process['log_file']}")
-#                 break
+            if cmd[0] == "quit":
+                for process in dc.processes.values():
+                    if process["process"].poll() is None:
+                        process["process"].terminate()
+                        process["process"].wait()
+                        print(f"Terminated process for cell {process['log_file']}")
+                break
 
-#             elif cmd[0] == "add" and len(cmd) == 3:
-#                 cell_id, rpc_port = cmd[1], int(cmd[2])
-#                 await dc.add_cell(cell_id, rpc_port)
+            elif cmd[0] == "add" and len(cmd) == 3:
+                cell_id, rpc_port = cmd[1], int(cmd[2])
+                await dc.add_cell(cell_id, rpc_port)
 
-#             elif cmd[0] == "remove" and len(cmd) == 2:
-#                 cell_id = cmd[1]
-#                 await dc.remove_cell(cell_id)
+            elif cmd[0] == "remove" and len(cmd) == 2:
+                cell_id = cmd[1]
+                await dc.remove_cell(cell_id)
 
-#             elif cmd[0] == "logs" and len(cmd) == 2:
-#                 cell_id = cmd[1]
-#                 dc.get_logs(cell_id)
-#             elif cmd[0] == "get_metrics" and len(cmd) == 2:
-#                 cell_id = cmd[1]
-#                 dc.get_metrics(cell_id)
-#             elif cmd[0] == "cleanup":
-#                 if hasattr(dc, "processes"):
-#                     for cell_id, info in dc.processes.items():
-#                         try:
-#                             os.remove(info["log_file"])
-#                             print(f"Removed {info['log_file']}")
-#                         except FileNotFoundError:
-#                             pass
+            elif cmd[0] == "logs" and len(cmd) == 2:
+                cell_id = cmd[1]
+                dc.get_logs(cell_id)
+            elif cmd[0] == "get_metrics" and len(cmd) == 2:
+                cell_id = cmd[1]
+                dc.get_metrics(cell_id)
+            elif cmd[0] == "cleanup":
+                if hasattr(dc, "processes"):
+                    for cell_id, info in dc.processes.items():
+                        try:
+                            os.remove(info["log_file"])
+                            print(f"Removed {info['log_file']}")
+                        except FileNotFoundError:
+                            pass
 
-#                 import glob
+                import glob
 
-#                 for log_file in glob.glob("cell_*.log"):
-#                     try:
-#                         os.remove(log_file)
-#                         print(f"Removed orphaned {log_file}")
-#                     except:
-#                         pass
+                for log_file in glob.glob("cell_*.log"):
+                    try:
+                        os.remove(log_file)
+                        print(f"Removed orphaned {log_file}")
+                    except:
+                        pass
 
-#             elif cmd[0] == "link" and len(cmd) == 7:
-#                 cell1, port1, cell2, port2, addr1, addr2 = cmd[1:]
-#                 dc.create_link(cell1, port1, cell2, port2, addr1, addr2)
+            elif cmd[0] == "link" and len(cmd) == 7:
+                cell1, port1, cell2, port2, addr1, addr2 = cmd[1:]
+                dc.create_link(cell1, port1, cell2, port2, addr1, addr2)
 
-#             elif cmd[0] == "status":
-#                 dc.check_status()
+            elif cmd[0] == "status":
+                dc.check_status()
 
-#             elif cmd[0] == "port" and len(cmd) == 3:
-#                 cell_id, port_name = cmd[1], cmd[2]
-#                 dc.check_port_status(cell_id, port_name)
+            elif cmd[0] == "port" and len(cmd) == 3:
+                cell_id, port_name = cmd[1], cmd[2]
+                dc.check_port_status(cell_id, port_name)
 
-#             elif cmd[0] == "unlink" and len(cmd) == 5:
-#                 cell1, port1, cell2, port2 = cmd[1:]
-#                 dc.unlink(cell1, port1, cell2, port2)
+            elif cmd[0] == "unlink" and len(cmd) == 5:
+                cell1, port1, cell2, port2 = cmd[1:]
+                dc.unlink(cell1, port1, cell2, port2)
 
-#             elif cmd[0] == "inject_fault" and len(cmd) >= 4:
-#                 cell_id, port_name, fault_type = cmd[1:4]
-#                 kwargs = {}
+            elif cmd[0] == "inject_fault" and len(cmd) >= 4:
+                cell_id, port_name, fault_type = cmd[1:4]
+                kwargs = {}
 
-#                 if fault_type == "drop" and len(cmd) == 5:
-#                     kwargs["drop_rate"] = float(cmd[4])
-#                 elif fault_type == "delay" and len(cmd) == 5:
-#                     kwargs["delay_ms"] = int(cmd[4])
-#                 elif fault_type == "disconnect" and len(cmd) == 5:
-#                     pass
+                if fault_type == "drop" and len(cmd) == 5:
+                    kwargs["drop_rate"] = float(cmd[4])
+                elif fault_type == "delay" and len(cmd) == 5:
+                    kwargs["delay_ms"] = int(cmd[4])
+                elif fault_type == "disconnect" and len(cmd) == 5:
+                    pass
 
-#                 dc.inject_fault(cell_id, port_name, fault_type, **kwargs)
-#             elif cmd[0] == 'clear_messages' and len(cmd) == 2:
-#                 cell_id = cmd[1]
-#                 dc.clear_messages(cell_id)
-#             elif cmd[0] == "clear_fault" and len(cmd) == 3:
-#                 cell_id, port_name = cmd[1:]
-#                 dc.clear_fault(cell_id, port_name)
+                dc.inject_fault(cell_id, port_name, fault_type, **kwargs)
+            elif cmd[0] == 'clear_messages' and len(cmd) == 2:
+                cell_id = cmd[1]
+                dc.clear_messages(cell_id)
+            elif cmd[0] == "clear_fault" and len(cmd) == 3:
+                cell_id, port_name = cmd[1:]
+                dc.clear_fault(cell_id, port_name)
 
-#             elif cmd[0] == "lt" and len(cmd) == 2:
-#                 topology_file = cmd[1]
-#                 await dc.load_topology(topology_file)
+            elif cmd[0] == "lt" and len(cmd) == 2:
+                topology_file = cmd[1]
+                await dc.load_topology(topology_file)
 
-#             elif cmd[0] == "teardown":
-#                 await dc.teardown()
+            elif cmd[0] == "teardown":
+                await dc.teardown()
                     
                 
-#             elif cmd[0] == 'send' and len(cmd) >= 4:
-#                 from_cell, to_cell = cmd[1], cmd[2]
-#                 payload = ' '.join(cmd[3:])  # Join remaining args as message
-#                 dc.send_message(from_cell, to_cell, payload)
+            elif cmd[0] == 'send' and len(cmd) >= 4:
+                from_cell, to_cell = cmd[1], cmd[2]
+                payload = ' '.join(cmd[3:])  # Join remaining args as message
+                dc.send_message(from_cell, to_cell, payload)
 
-#             elif cmd[0] == 'messages' and len(cmd) >= 2:
-#                 cell_id = cmd[1]
-#                 from_node = cmd[2] if len(cmd) == 3 else None
-#                 dc.get_messages(cell_id, from_node)
+            elif cmd[0] == 'messages' and len(cmd) >= 2:
+                cell_id = cmd[1]
+                from_node = cmd[2] if len(cmd) == 3 else None
+                dc.get_messages(cell_id, from_node)
 
-#             elif cmd[0] == 'pop' and len(cmd) == 2:
-#                 cell_id = cmd[1]
-#                 dc.pop_message(cell_id)
+            elif cmd[0] == 'pop' and len(cmd) == 2:
+                cell_id = cmd[1]
+                dc.pop_message(cell_id)
 
-#             elif cmd[0] == 'broadcast' and len(cmd) >= 3:
-#                 from_cell = cmd[1]
-#                 payload = ' '.join(cmd[2:])
-#                 dc.broadcast_message(from_cell, payload)
+            elif cmd[0] == 'broadcast' and len(cmd) >= 3:
+                from_cell = cmd[1]
+                payload = ' '.join(cmd[2:])
+                dc.broadcast_message(from_cell, payload)
             
           
 
-#             elif cmd[0] == 'fsp_status':
-#                 statuses = dc.get_all_fsp_status()
-#                 for cell_id, status in statuses.items():
-#                     print(f"{cell_id}: {status}")
+            elif cmd[0] == 'fsp_status':
+                statuses = dc.get_all_fsp_status()
+                for cell_id, status in statuses.items():
+                    print(f"{cell_id}: {status}")
 
-#             elif cmd[0] == 'manual_fsp' and len(cmd) == 2:
-#                 cell_id = cmd[1]
-#                 result = dc.trigger_manual_fsp(cell_id)
-#                 print(f"Manual FSP result: {result}")
+            elif cmd[0] == 'manual_fsp' and len(cmd) == 2:
+                cell_id = cmd[1]
+                print("triggering manual fsp...")
+                result = dc.trigger_manual_fsp(cell_id)
+                print(f"Manual FSP result: {result}")
 
-#             elif cmd[0] == "help":
-#                 help()
+            elif cmd[0] == "help":
+                help()
 
-#             else:
-#                 print("Invalid command. Type 'quit' to exit.")
+            else:
+                print("Invalid command. Type 'quit' to exit.")
 
-#         except KeyboardInterrupt:
-#             print("\nExiting...")
-#             await dc.teardown()
+        except KeyboardInterrupt:
+            print("\nExiting...")
+            await dc.teardown()
            
 
-#             break
+            break
 
-#         except Exception as e:
-#             await dc.teardown()
+        except Exception as e:
+            await dc.teardown()
             
             
-#             print(f"Error: {e}")
+            print(f"Error: {e}")
 
 
-# if __name__ == "__main__":
-#     asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -62,7 +62,6 @@ class Agent:
     def __init__(self, node_id: str, thread_manager: ThreadManager):
         super().__init__()
         self.logger = logging.getLogger("Agent")
-        self.logger.disabled = True
 
         self.thread_manager = thread_manager
         self.node_id = node_id
@@ -93,35 +92,75 @@ class Agent:
     def register_handler(self, message_type, handler_func):
         """Registers a handler for a specific message type"""
         self.message_handlers[message_type] = handler_func
-        self.logger.info('Registered handler for message type: %s', message_type)
+        # self.logger.info('Registered handler for message type: %s', message_type)
         
     def unregister_handler(self, message_type):
         """Unregister handler for message type"""
         if message_type in self.message_handlers:
             del self.message_handlers[message_type]
-            self.logger.info('Unregistered handler for message type: %s', message_type)
+            # self.logger.info('Unregistered handler for message type: %s', message_type)
             
+
+    async def start_fsp_as_general(self):
+        """
+        Start the Firing Squad Synchronization Problem with this node as the general (position 1).
+        """
+        # self.logger.info(f"🔥 Starting FSP with {self.node_id} as the general")
         
+        try:
+            # Create the FSP_ACTIVATE event to trigger FSP on THIS cell (the general)
+            # The general starts at position 1 and has no left neighbor
+            fsp_event = {
+                "data": b"FSP_ACTIVATE 1",
+                "port_id": "general_start",  # Special marker indicating this is the start
+                "type": "FSP_ACTIVATE"
+            }
+            
+            # Put the activation event into our own FSP events queue
+            await self.fsp_events.put(fsp_event)
+            
+            # self.logger.info(f"📤 FSP_ACTIVATE sent to local fsp_events queue")
+            
+            return {"success": True, "message": "FSP activation initiated"}
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to start FSP: {e}")
+            return {"success": False, "message": f"Failed to start FSP: {str(e)}"}
+
+    
+    def get_fsp_status(self) -> dict:
+        """Get current FSP status information"""
+        if not hasattr(self, 'fsp_context') or not self.fsp_context:
+            return {"status": "inactive", "message": "FSP not started"}
+        
+        return {
+            "status": "active" if self.fsp_context.get('active', False) else "inactive",
+            "position": self.fsp_context.get('position'),
+            "timestep": self.fsp_context.get('timestep'),
+            "state": self.fsp_context.get('state'),
+            "chain_length": self.fsp_context.get('chain_length'),
+            "max_time": self.fsp_context.get('max_time'),
+        }
+
     async def run(self):
-        self.logger.info("Starting Agent")
+        # self.logger.info("Starting Agent")
         self.running = True
         ports = self.thread_manager.get_ports()
 
         for port_id, port in ports.items():
             if port.protocol_instance:
                 state = port.protocol_instance.link_state
-                self.logger.info(f"📡 Port {port_id} initial state: {state}")
+                # self.logger.info(f"📡 Port {port_id} initial state: {state}")
             else:
-                self.logger.info(f"📡 Port {port_id} has no protocol instance yet")
+                pass
+                # self.logger.info(f"📡 Port {port_id} has no protocol instance yet")
 
         if self.node_id in self.trees:
             self.logger.warning(
                 f"⚠️ Tree for {self.node_id} already exists at startup: {self.trees[self.node_id]}"
             )
         else:
-            self.logger.info(
-                f"✅ No tree exists for {self.node_id} at startup (expected)"
-            )
+            pass
 
         tasks = [
             asyncio.create_task(
@@ -154,22 +193,30 @@ class Agent:
         """Handles FSP-related events """
         while self.running:
             event = await self.fsp_events.get()
-            
-            if event["data"].startswith(b"FSP_ACTIVATE"):
+            self.logger.info(f"Processing a {event['data']} event")
+            if event["data"].startswith(b"FSP_ACTIVATE_ACK"):
+                await self._handle_fsp_activate_ack(event) 
+            elif event["data"].startswith(b"FSP_ACTIVATE"):
                 await self._handle_fsp_activate(event)
-            elif event["data"].startswith(b"FSP_ACTIVATE_ACK"):
-                await self._handle_fsp_activate_ack(event)
-            elif event["data"].startswith(b"FSP_STATE"):
-                await self._handle_fsp_state_request(event)
             elif event["data"].startswith(b"FSP_STATE_ACK"):
-                await self._handle_fsp_state_ack(event)
+               await self._handle_fsp_state_ack(event)
+            elif event["data"].startswith(b"FSP_STATE_NACK"):
+               await self._handle_fsp_state_nack(event)
+            elif event["data"].startswith(b"FSP_STATE"):
+               await self._handle_fsp_state_request(event)
     
+    async def _handle_fsp_state_nack(self, event):
+        from_port = event["port_id"]
+        payload = f"FSP_STATE {self.fsp_context['timestep']}"
+        
+        await self._send_on_port(from_port, payload.encode())
+           
     async def _handle_fsp_activate(self, event):
         """Parses the FSP_ACTIVATE and forwards + tracks position"""
         parts = event["data"].decode().split()
         position = int(parts[1]) if len(parts) > 1 else 1
         from_port = event["port_id"]
-        self.logger.info(f"FSP_ACTIVATE received: position: {position}")
+        # self.logger.info(f"FSP_ACTIVATE received: position: {position}")
         
         self.fsp_context = {
             'position': position,
@@ -187,7 +234,7 @@ class Agent:
             
             forward_message = f"FSP_ACTIVATE {position + 1}"
             await self._send_on_port(next_port, forward_message.encode())
-            self.logger.info(f"Forwarded FSP_ACTIVATE to position {position + 1}")
+            # self.logger.info(f"Forwarded FSP_ACTIVATE to position {position + 1}")
         else:
             # this is the last on the chain
             ack_message = f"FSP_ACTIVATE_ACK {position}"
@@ -201,9 +248,20 @@ class Agent:
                     'left': False,
                     'right': True
             }
+            self.fsp_context['sent_to_neighbors'] = {
+                'left': False,
+                'right': True,
+            }
+            self.fsp_context['chain_length'] = position
+            self.fsp_tables = self._load_fsp_tables(position)
+            self.transition_lock = asyncio.Lock()
+
             
             await self._send_on_port(from_port, ack_message.encode())
-            self.logger.info(f"Last cell  sending FSP_ACTIVATE_ACK with chain length {position}")
+            # self.logger.info(f"Last cell sending FSP_ACTIVATE_ACK with chain length {position}")
+
+            await self._request_all_neighbor_states()
+
 
     async def _handle_fsp_activate_ack(self, event):
         """Handles FSP_ACTIVATE_ACK, which will ripple back. this WILL assign a default state to the cell (agent is an attribute of cell). assumes linear topology is in place"""
@@ -211,24 +269,22 @@ class Agent:
         chain_length = int(parts[1]) if len(parts) > 1 else 1 
         from_port = event["port_id"]
         
-        self.logger.info(f"FSP_ACTIVATE_ACK received: chain length is {chain_length}")
+        # self.logger.info(f"FSP_ACTIVATE_ACK received: chain length is {chain_length}")
 
         if self.fsp_context['position'] == 1:
             initial_state = P0
-            self.logger.info(f"General at pos {self.fsp_context['position']} set with state P0")
+            # self.logger.info(f"General at pos {self.fsp_context['position']} set with state P0")
         else:
             initial_state = Q
-            self.logger.info(f"Soldier at pos {self.fsp_context['position']} set with state Q")
+            # self.logger.info(f"Soldier at pos {self.fsp_context['position']} set with state Q")
         
         self.fsp_context.update({
             'timestep': 0,
             'state': initial_state,
             'active': True,
             'max_time': (2 * chain_length) - 2,
-            'chain_length': chain_length
+            'chain_length': chain_length,
         })
-        self.fsp_neighbors_ready_event = asyncio.Event()
-    
         
         self.fsp_context['neighbors_ready'] = {}
 
@@ -237,15 +293,20 @@ class Agent:
         
         if self.fsp_context['right_port'] is not None:
             self.fsp_context['neighbors_ready']['right'] = False
+        
+        self.fsp_context['sent_to_neighbors'] = {
+                'left': False,
+                'right': False,
+            }
             
         if self.fsp_context['position'] > 1:
         # Forward ACK back to left neighbor
             await self._send_on_port(self.fsp_context['left_port'], event["data"])
-            self.logger.info(f"Forwarded FSP_ACTIVATE_ACK toward General")
+            # self.logger.info(f"Forwarded FSP_ACTIVATE_ACK toward General")
         else:
             # We are the general - chain fully activated, start handshake!
-            self.logger.info(f"General: Chain fully activated! Starting FSP handshake...")
-            
+            # self.logger.info(f"General: Chain fully activated! Starting FSP handshake...")
+            self.fsp_context['sent_to_neighbors']['left'] = True
         
         self.fsp_tables = self._load_fsp_tables(self.fsp_context['chain_length'])
         self.transition_lock = asyncio.Lock()
@@ -261,19 +322,25 @@ class Agent:
         requested_timestep = int(parts[1])
         from_port = event["port_id"]
 
-        self.logger.info(f"FSP_STATE request from port {from_port} for timestep {requested_timestep}")           
+        # self.logger.info(f"FSP_STATE request from port {from_port} for timestep {requested_timestep}")           
 
-        if self.fsp_context['timestep'] > requested_timestep:
-            await self._send_fsp_state_ack(from_port, requested_timestep)
-            self.logger.info(f"Sent current FSP_STATE_ACK to port {from_port}")   
+        if self.fsp_context['timestep'] < requested_timestep:
+            await self._send_on_port(from_port, f"FSP_STATE_NACK".encode())
+            
+            # self.logger.info(f"Sent current FSP_STATE_ACK to port {from_port}")   
         elif self.fsp_context['timestep'] == requested_timestep:
-            self.logger.info(f"Waiting for all neighbors before responding to T{requested_timestep}")
+            # self.logger.info(f"Sending current state to neighbor for T{requested_timestep}")
+            if from_port == self.fsp_context['left_port']:
+                neighbor_direction = 'left'
+            elif from_port == self.fsp_context['right_port']:
+                neighbor_direction = 'right'
 
-            await self.fsp_neighbors_ready_event.wait()
+            self.fsp_context['sent_to_neighbors'][neighbor_direction] = True
             
             await self._send_fsp_state_ack(from_port, requested_timestep)
-            self.logger.info(f"Sent completed state for T{requested_timestep}")
-            
+            # self.logger.info(f"Sent completed state for T{requested_timestep}")
+        elif self.fsp_context['timestep'] > requested_timestep:
+            await self._send_on_port(from_port, f"FSP_STATE_NACK".encode())
         else: 
             # We're ahead - this is an error but respond anyway
             self.logger.warning(f"Received request for T{requested_timestep} but we're at T{self.fsp_context['timestep']}")
@@ -285,7 +352,7 @@ class Agent:
         ack_message = f"FSP_STATE_ACK {timestep} {current_state}"
         
         await self._send_on_port(from_port, ack_message.encode())
-        self.logger.info(f"Sent FSP_STATE_ACK: T{timestep}, state={self.fsp_context.get("state", 'UNK')} to port {from_port}") 
+        # self.logger.info(f"Sent FSP_STATE_ACK: T{timestep}, state={self.fsp_context.get("state", 'UNK')} to port {from_port}") 
         
     async def _handle_fsp_state_ack(self, event):
         """Handles FSP_STATE_ACK responses from neighbors"""
@@ -293,8 +360,9 @@ class Agent:
         ack_timestep = int(parts[1])
         neighbor_state = int(parts[2])
         from_port = event["port_id"]
-        
-        self.logger.info(f"FSP_STATE_ACK from port {from_port}: T{ack_timestep}, state={neighbor_state}")
+
+        self.logger.info(self.fsp_context)
+        # self.logger.info(f"FSP_STATE_ACK from port {from_port}: T{ack_timestep}, state={neighbor_state}")
 
         if from_port == self.fsp_context['left_port']:
             neighbor_direction = 'left'
@@ -310,15 +378,20 @@ class Agent:
         
         if 'neighbor_states' not in self.fsp_context:
             self.fsp_context['neighbor_states'] = {}
+
         self.fsp_context['neighbor_states'][neighbor_direction] = neighbor_state
         self.fsp_context['neighbors_ready'][neighbor_direction] = True
         
-        if all(self.fsp_context['neighbors_ready'].values()):
-            self.logger.info(f"All neighbors ready for T{self.fsp_context['timestep']} - advancing!")
+        if (all(self.fsp_context['neighbors_ready'].values()) and 
+            all(self.fsp_context['sent_to_neighbors'].values())):
+            # self.logger.info(f"All neighbors ready for T{self.fsp_context['timestep']} - advancing!")
             await self._advance_timestep()
         else:
             missing = [direction for direction, ready in self.fsp_context['neighbors_ready'].items() if not ready]
-            self.logger.info(f"Still waiting for: {missing}")
+            # self.logger.info(f"Still waiting for: {missing}")
+        
+        self.logger.info(self.fsp_context)
+
         
         
     async def _advance_timestep(self):
@@ -336,22 +409,30 @@ class Agent:
             self.logger.info(f"    - Right: ({statename.get(right_state, 'UNK')})")
 
             new_state = self._apply_fsp_transition(left_state, old_state, right_state) 
-
-            self.logger.info(f"    - Result: ({new_state})")
+            self.logger.info("===================" * 3)
+            self.logger.info(f"    - Result: ({statename.get(new_state, 'UNK')})")
 
             
             if new_state != old_state:
                 self.fsp_context['state'] = new_state  
-                self.logger.info(f"🔄 FSP {self.node_id} T{self.fsp_context['timestep']}: {statename.get(old_state, 'UNK')} → {statename.get(new_state, 'UNK')}")
+                # self.logger.info(f"🔄 FSP {self.node_id} T{self.fsp_context['timestep']}: {statename.get(old_state, 'UNK')} → {statename.get(new_state, 'UNK')}")
             
-        self.fsp_neighbors_ready_event.set()
         
         self.fsp_context['timestep'] += 1 
         
         for direction in self.fsp_context['neighbors_ready']:
             self.fsp_context['neighbors_ready'][direction] = False
         
-
+        for direction in self.fsp_context['sent_to_neighbors']:
+            self.fsp_context['sent_to_neighbors'][direction] = False 
+        
+        if self.fsp_context['position'] == 1:
+            self.fsp_context['sent_to_neighbors']['left'] = True
+            self.fsp_context['neighbors_ready']['left'] = True
+        elif self.fsp_context['position'] == self.fsp_context['chain_length']:
+            self.fsp_context['sent_to_neighbors']['right'] = True
+            self.fsp_context['neighbors_ready']['right'] = True
+        
             
         if self.fsp_context['timestep'] < self.fsp_context['max_time']:
             await self._request_all_neighbor_states()
@@ -369,7 +450,7 @@ class Agent:
         else:
             self.logger.info(f"⏹️ FSP stopped early at time {self.fsp_context['timestep']}")
         
-        self.fsp_active = False
+        self.fsp_context['active'] = False
     
     def _get_neighbor_state(self, direction):
         """Get neighbor state from handshake data"""
@@ -402,13 +483,12 @@ class Agent:
     
     async def _request_all_neighbor_states(self):
         """Send FSP_STATE requests to all neighbors and reset readiness flags"""
-        self.fsp_neighbors_ready_event.clear()
         current_timestep = self.fsp_context['timestep']
 
         
         # Reset readiness flags - this creates the "block" until ACKs arrive
-        for direction in self.fsp_context['neighbors_ready']:
-            self.fsp_context['neighbors_ready'][direction] = False
+        # for direction in self.fsp_context['neighbors_ready']:
+        #     self.fsp_context['neighbors_ready'][direction] = False
         
         request_count = 0
         
@@ -416,29 +496,30 @@ class Agent:
         if self.fsp_context['left_port'] is not None:
             request_msg = f"FSP_STATE {current_timestep}"
             await self._send_on_port(self.fsp_context['left_port'], request_msg.encode())
-            self.logger.info(f"📤 Sent FSP_STATE request to LEFT neighbor for T{current_timestep}")
+            # self.logger.info(f"📤 Sent FSP_STATE request to LEFT neighbor for T{current_timestep}")
             request_count += 1
             
         # Send request to right neighbor if exists  
         if self.fsp_context['right_port'] is not None:
             request_msg = f"FSP_STATE {current_timestep}"
             await self._send_on_port(self.fsp_context['right_port'], request_msg.encode())
-            self.logger.info(f"📤 Sent FSP_STATE request to RIGHT neighbor for T{current_timestep}")
+            # self.logger.info(f"📤 Sent FSP_STATE request to RIGHT neighbor for T{current_timestep}")
             request_count += 1
         
         if request_count == 0:
             # No neighbors - can advance immediately (shouldn't happen in chain)
-            self.logger.info(f"⚠️ No neighbors to request from - advancing immediately")
+            # self.logger.info(f"⚠️ No neighbors to request from - advancing immediately")
             await self._advance_fsp_state()
         else:
-            self.logger.info(f"🚫 BLOCKED: Waiting for {request_count} neighbor ACKs for T{current_timestep}")
+            pass
+            # self.logger.info(f"🚫 BLOCKED: Waiting for {request_count} neighbor ACKs for T{current_timestep}")
         
      
     # END OF FIRING SQUAD METHODS =========   
 
         
         
-    def _get_other_connected_port(self, exclude_port):
+    def _get_other_connected_port(self, exclude_port=None):
         """This method ASSUMES a linear topology. It will return the next port not excluded, else None."""
         ports = self.thread_manager.get_ports()
         for port_id, port in ports.items():
@@ -471,7 +552,7 @@ class Agent:
             ack_packet = TreeBuildAck.from_bytes(event["data"])
             port_id = event["port_id"]
 
-            self.logger.info("Received TREE_BUILD_ACK from %s: %s", port_id, ack_packet)
+            # self.logger.info("Received TREE_BUILD_ACK from %s: %s", port_id, ack_packet)
 
             if ack_packet.neighbors:
                 await self._update_neighbor_info(port_id, ack_packet.neighbors)
@@ -529,7 +610,7 @@ class Agent:
             }
         )
 
-        self.logger.info(f"Updated neighbor info for port {port_id}: {neighbor_list}")
+        # self.logger.info(f"Updated neighbor info for port {port_id}: {neighbor_list}")
 
     async def _handle_tree_build(self, event: TreeBuild):
         """Handle TREE_BUILD messages from other nodes."""
@@ -540,9 +621,10 @@ class Agent:
         if await self._should_join_tree(tb_packet, port_id):
             await self._join_tree(tb_packet, port_id)
         else:
-            self.logger.info(
-                f"Ignoring TREE_BUILD for {tb_packet.tree_id} (already have better path)"
-            )
+            # # self.logger.info(
+            #     f"Ignoring TREE_BUILD for {tb_packet.tree_id} (already have better path)"
+            # )
+            pass
 
     async def _join_tree(self, tb_packet: TreeBuild, port_id: str):
         """Join a tree and send ACK with our neighbor info (fixed version)"""
@@ -556,7 +638,7 @@ class Agent:
                 leafward_portids=[],
             )
 
-            self.logger.info(f"Created tree entry: {self.trees[tb_packet.tree_id]}")
+            # self.logger.info(f"Created tree entry: {self.trees[tb_packet.tree_id]}")
 
             # Send ACK back to parent with our neighbor information
             ack_packet = TreeBuildAck(
@@ -582,7 +664,7 @@ class Agent:
             neighbors=self._get_current_neighbors(),
         )
 
-        self.logger.info(f"Forwarded packet: {forwarded_packet}")
+        # self.logger.info(f"Forwarded packet: {forwarded_packet}")
 
         ports = self.thread_manager.get_ports()
 
@@ -599,9 +681,10 @@ class Agent:
                 await self._send_on_port(port_id, forwarded_packet.to_bytes())
                 forwarded_count += 1
             else:
-                self.logger.info(
-                    f"❌ Skipping port {port_id} - excluded or not connected"
-                )
+                # # self.logger.info(
+                #     f"❌ Skipping port {port_id} - excluded or not connected"
+                # )
+                pass
 
     def _get_current_neighbors(self):
         neighbors = []
@@ -630,32 +713,32 @@ class Agent:
             from hermes.sim.wakesman_fsp import process_csv_for_run
             
             # ADD DEBUGGING TO CHECK CONSTANTS:
-            self.logger.info(f"🔍 Checking state constants:")
-            self.logger.info(f"    Q={Q}, T={T}, P0={P0}, P1={P1}")
-            self.logger.info(f"    B0={B0}, B1={B1}, R0={R0}, R1={R1}")
-            self.logger.info(f"    A0={A0}, A1={A1}, A2={A2}, A3={A3}")
-            self.logger.info(f"    A4={A4}, A5={A5}, A6={A6}, A7={A7}")
-            self.logger.info(f"    xx={xx}")
+            # self.logger.info(f"🔍 Checking state constants:")
+            # self.logger.info(f"    Q={Q}, T={T}, P0={P0}, P1={P1}")
+            # self.logger.info(f"    B0={B0}, B1={B1}, R0={R0}, R1={R1}")
+            # self.logger.info(f"    A0={A0}, A1={A1}, A2={A2}, A3={A3}")
+            # self.logger.info(f"    A4={A4}, A5={A5}, A6={A6}, A7={A7}")
+            # self.logger.info(f"    xx={xx}")
             
             tables = process_csv_for_run(chain_length)
             
             # CHECK P0 TABLE ENTRIES:
             if tables and len(tables) > 3:
                 p0_table = tables[3]  # P0 table is at index 3
-                self.logger.info(f"🔍 P0 table has {len(p0_table)} entries")
+                # self.logger.info(f"🔍 P0 table has {len(p0_table)} entries")
                 
                 # Check for the specific transitions Alice should make:
                 p0_left_p0_right = (P0 * 32) + P0  # Should give T
                 p0_left_q_right = (P0 * 32) + Q    # Current Alice case
                 p0_left_a2_right = (P0 * 32) + A2  # Current Alice case
                 
-                self.logger.info(f"    Key for (P0,P0,P0): {p0_left_p0_right} -> {p0_table.get(p0_left_p0_right, 'MISSING')}")
-                self.logger.info(f"    Key for (P0,P0,Q): {p0_left_q_right} -> {p0_table.get(p0_left_q_right, 'MISSING')}")
-                self.logger.info(f"    Key for (P0,P0,A2): {p0_left_a2_right} -> {p0_table.get(p0_left_a2_right, 'MISSING')}")
+                # self.logger.info(f"    Key for (P0,P0,P0): {p0_left_p0_right} -> {p0_table.get(p0_left_p0_right, 'MISSING')}")
+                # self.logger.info(f"    Key for (P0,P0,Q): {p0_left_q_right} -> {p0_table.get(p0_left_q_right, 'MISSING')}")
+                # self.logger.info(f"    Key for (P0,P0,A2): {p0_left_a2_right} -> {p0_table.get(p0_left_a2_right, 'MISSING')}")
             
             return tables
         except ImportError as e:
-            self.logger.info(f"⚠️ Could not load FSP tables: {e}")
+            # self.logger.info(f"⚠️ Could not load FSP tables: {e}")
             return None
     
 
@@ -664,37 +747,37 @@ class Agent:
 
         # First time seeing this tree - always join
         if tb_packet.tree_id not in self.trees:
-            self.logger.info(
-                f"SHOULD_JOIN: First time seeing tree {tb_packet.tree_id} - YES"
-            )
+            # # self.logger.info(
+            #     f"SHOULD_JOIN: First time seeing tree {tb_packet.tree_id} - YES"
+            # )
             return True
 
         existing_tree = self.trees[tb_packet.tree_id]
 
         # Different instance (tree rebuild) - always join
         if tb_packet.tree_instance_id != existing_tree.tree_instance_id:
-            self.logger.info(
-                f"SHOULD_JOIN: New instance of tree {tb_packet.tree_id} - YES"
-            )
+            # # self.logger.info(
+            #     f"SHOULD_JOIN: New instance of tree {tb_packet.tree_id} - YES"
+            # )
             return True
 
         # Same path from same port (refresh) - always join
         if port_id == existing_tree.rootward_portid:
-            self.logger.info(f"SHOULD_JOIN: Refresh from same port {port_id} - YES")
+            # self.logger.info(f"SHOULD_JOIN: Refresh from same port {port_id} - YES")
             return True
 
         # NEW: Accept any path that's better or equal
         new_hops = tb_packet.hops + 1
         if new_hops < existing_tree.hops:
-            self.logger.info(f"SHOULD_JOIN: Better or equal path - YES")
-            self.logger.info(
-                f"  Current hops: {existing_tree.hops}, new hops: {new_hops}"
-            )
+            # # self.logger.info(f"SHOULD_JOIN: Better or equal path - YES")
+            # # self.logger.info(
+            #     f"  Current hops: {existing_tree.hops}, new hops: {new_hops}"
+            # )
             return True
 
         # Only reject if worse
-        self.logger.info(f"SHOULD_JOIN: Rejecting worse path - NO")
-        self.logger.info(f"  Current hops: {existing_tree.hops}, new hops: {new_hops}")
+        # self.logger.info(f"SHOULD_JOIN: Rejecting worse path - NO")
+        # self.logger.info(f"  Current hops: {existing_tree.hops}, new hops: {new_hops}")
         return False
 
     async def _handle_link_events(self):
@@ -703,10 +786,10 @@ class Agent:
                 event = await self.link_events.get()
 
                 if event["type"] == "CONNECTED":
-                    self.logger.info(f"Handling CONNECTED event: {event}")
+                    # self.logger.info(f"Handling CONNECTED event: {event}")
                     await self._handle_connected(event)
                 elif event["type"] == "DISCONNECTED":
-                    self.logger.info(f"Handling DISCONNECTED event: {event}")
+                    # self.logger.info(f"Handling DISCONNECTED event: {event}")
                     await self._handle_disconnected(event)
                 elif event["type"] == "PEER_UNRESPONSIVE":
                     await self._handle_peer_unresponsive(event)
@@ -736,9 +819,9 @@ class Agent:
             for tree_id, tree_entry in self.trees.items():
                 if tree_entry.rootward_portid == port_id:
                     trees_to_invalidate.append(tree_id)
-                    self.logger.info(
-                        f"Tree {tree_id} affected by unresponsive port {port_id}"
-                    )
+                    # # self.logger.info(
+                    #     f"Tree {tree_id} affected by unresponsive port {port_id}"
+                    # )
 
             # Create invalidation messages (same pattern as disconnection)
             for tree_id in trees_to_invalidate:
@@ -766,7 +849,7 @@ class Agent:
     async def _handle_peer_recovered(self, event):
         """Handle peer recovery - rebuild trees"""
         port_id = event["port_id"]
-        self.logger.info(f"🟢 Peer recovered on port {port_id} - rebuilding trees")
+        # self.logger.info(f"🟢 Peer recovered on port {port_id} - rebuilding trees")
 
         await self._trigger_tree_healing(failed_port=None)
     
@@ -794,7 +877,7 @@ class Agent:
 
                 await self._handle_data_packet(event)
 
-                self.logger.info("Received DATA message: %s", event["data"])
+                # self.logger.info("Received DATA message: %s", event["data"])
 
             except:
                 self.logger.error("Error handling message events", exc_info=True)
@@ -820,28 +903,28 @@ class Agent:
 
             from_port_id = event["port_id"]
 
-            self.logger.info(
-                f"Processing TREE_BUILD_INVALIDATION for tree {tree_id} "
-                f"from port {from_port_id}, TTL={ttl}, ID={invalidation_id}"
-            )
+            # # self.logger.info(
+            #     f"Processing TREE_BUILD_INVALIDATION for tree {tree_id} "
+            #     f"from port {from_port_id}, TTL={ttl}, ID={invalidation_id}"
+            # )
 
             #  Check if we've already seen this invalidation
             if invalidation_id in self.seen_invalidations:
-                self.logger.info(
-                    f"Already processed invalidation {invalidation_id} - ignoring"
-                )
+                # # self.logger.info(
+                #     f"Already processed invalidation {invalidation_id} - ignoring"
+                # )
                 return
 
             # Check TTL
             if ttl <= 0:
-                self.logger.info(
-                    f"TTL expired for invalidation {invalidation_id} - not forwarding"
-                )
+                # # self.logger.info(
+                #     f"TTL expired for invalidation {invalidation_id} - not forwarding"
+                # )
                 return
 
             # Mark this invalidation as seen
             self.seen_invalidations.add(invalidation_id)
-            self.logger.info(f"Marked invalidation {invalidation_id} as seen")
+            # self.logger.info(f"Marked invalidation {invalidation_id} as seen")
 
             # Process the invalidation locally
             invalidated_locally = False
@@ -849,22 +932,24 @@ class Agent:
                 tree_entry = self.trees[tree_id]
 
                 # if tree_id == self.node_id:
-                #     self.logger.info(
+                #     # self.logger.info(
                 #         f"Ignoring invalidation for our own tree {tree_id} - we are the root"
                 #     )
                 if tree_entry.tree_instance_id == tree_instance_id:
-                    self.logger.info(f"Invalidating local tree {tree_id}")
+                    # self.logger.info(f"Invalidating local tree {tree_id}")
                     del self.trees[tree_id]
                     self._last_tree_change = time.time()  # Update last change time
                     invalidated_locally = True
-                    self.logger.info(f"✅ Invalidated and removed tree {tree_id}")
+                    # self.logger.info(f"✅ Invalidated and removed tree {tree_id}")
                 else:
-                    self.logger.info(
-                        f"Instance mismatch for tree {tree_id}: "
-                        f"received {tree_instance_id}, have {tree_entry.tree_instance_id}"
-                    )
+                    # # self.logger.info(
+                    #     f"Instance mismatch for tree {tree_id}: "
+                    #     f"received {tree_instance_id}, have {tree_entry.tree_instance_id}"
+                    # )
+                    pass
             else:
-                self.logger.info(f"Don't have tree {tree_id} locally")
+                pass
+                # self.logger.info(f"Don't have tree {tree_id} locally")
 
             new_ttl = ttl - 1
             if new_ttl > 0:
@@ -881,21 +966,22 @@ class Agent:
                         == LinkProtocol.LinkState.CONNECTED
                     ):
 
-                        self.logger.info(
-                            f"Forwarding invalidation {invalidation_id} to port {port_id} with TTL={new_ttl}"
-                        )
+                        # # self.logger.info(
+                        #     f"Forwarding invalidation {invalidation_id} to port {port_id} with TTL={new_ttl}"
+                        # )
                         await self._send_on_port(port_id, forwarded_msg)
                         forwarded_count += 1
 
-                self.logger.info(f"Forwarded invalidation to {forwarded_count} ports")
+                # self.logger.info(f"Forwarded invalidation to {forwarded_count} ports")
 
             if invalidated_locally:
                 healing_delay = random.uniform(0.1, 0.5)
                 asyncio.create_task(self._delayed_healing_trigger(healing_delay))
             else:
-                self.logger.info(
-                    f"TTL would be 0 - not forwarding invalidation {invalidation_id}"
-                )
+                # # self.logger.info(
+                #     f"TTL would be 0 - not forwarding invalidation {invalidation_id}"
+                # )
+                pass
 
         except Exception as e:
             self.logger.error(
@@ -908,7 +994,7 @@ class Agent:
 
     async def _monitor_ports(self):
         """Monitor ports for events (simplified debug version)"""
-        self.logger.info("Port monitoring started")
+        # self.logger.info("Port monitoring started")
 
         # Do one-time queue inspection
         if not hasattr(self, "_queue_inspected"):
@@ -931,9 +1017,9 @@ class Agent:
                     signal = port.io.signal_q.get()
                     if signal is not None and signal != b"":
                         # Log the signal
-                        self.logger.info(
-                            f"*** SIGNAL RECEIVED on port {portid}: {signal}"
-                        )
+                        # # self.logger.info(
+                        #     f"*** SIGNAL RECEIVED on port {portid}: {signal}"
+                        # )
                         await self.link_events.put(
                             {
                                 "type": signal.decode(),
@@ -955,39 +1041,42 @@ class Agent:
                 try:
                     data = port.io.read_q.get()
 
-                    self.logger.info(
-                        f"*** DATA RECEIVED on port {portid}: {data[:50]}..."
-                    )
+                    # # self.logger.info(
+                    #     f"*** DATA RECEIVED on port {portid}: {data[:50]}..."
+                    # )
                     event = {"data": data, "port_id": portid}
 
                     if data.startswith(b"TREE_BUILD_INVALIDATION"):
-                        self.logger.info(
-                            f"Routing TREE_BUILD_INVALIDATION to tree_events from port {portid}"
-                        )
+                        # # self.logger.info(
+                        #     f"Routing TREE_BUILD_INVALIDATION to tree_events from port {portid}"
+                        # )
                         await self.tree_events.put(event)
                     elif data.startswith(b"TREE_BUILD_ACK"):
-                        self.logger.info(
-                            f"Routing TREE_BUILD_ACK to tree_events from port {portid}"
-                        )
+                        # # self.logger.info(
+                        #     f"Routing TREE_BUILD_ACK to tree_events from port {portid}"
+                        # )
                         await self.tree_events.put(event)
                     elif data.startswith(b"TREE_BUILD"):
-                        self.logger.info(
-                            f"Routing TREE_BUILD to tree_events from port {portid}"
-                        )
+                        # # self.logger.info(
+                        #     f"Routing TREE_BUILD to tree_events from port {portid}"
+                        # )
                         await self.tree_events.put(event)
                     elif data.startswith(b"DATA_PACKET"):
-                        self.logger.info(
-                            f"Routing DATA_MESSAGE to message_events from port {portid}"
-                        )
+                        # # self.logger.info(
+                        #     f"Routing DATA_MESSAGE to message_events from port {portid}"
+                        # )
                         await self.message_events.put(event)
                         
                     # REMOVE UPON COMPLETION OF FMS: this introduces a lower level abstration JUST for the firing state problem.
-                    elif data.startswith(b"FSP_"):
+                    elif data.startswith(b"FSP"):
                         await self.fsp_events.put(event)
+                        # # self.logger.info(
+                        #     f"Routing FSP_ to fsp_events from port {portid}"
+                        # )
                     else:
-                        self.logger.info(
-                            f"Routing unknown message to link_events from port {portid}: {data[:20]}"
-                        )
+                        # # self.logger.info(
+                        #     f"Routing unknown message to link_events from port {portid}: {data[:20]}"
+                        # )
                         event["type"] = "UNKNOWN_MESSAGE"
                         event["timestamp"] = time.time()
                         await self.link_events.put(event)
@@ -1004,34 +1093,35 @@ class Agent:
         if ports:
             port_id, port = next(iter(ports.items()))
 
-            self.logger.info(f"=== QUEUE INSPECTION for port {port_id} ===")
-            self.logger.info(f"signal_q type: {type(port.io.signal_q)}")
-            self.logger.info(
-                f"signal_q methods: {[m for m in dir(port.io.signal_q) if not m.startswith('_')]}"
-            )
+            # self.logger.info(f"=== QUEUE INSPECTION for port {port_id} ===")
+            # self.logger.info(f"signal_q type: {type(port.io.signal_q)}")
+            # # self.logger.info(
+            #     f"signal_q methods: {[m for m in dir(port.io.signal_q) if not m.startswith('_')]}"
+            # )
 
             # Test if queue has data checking methods
-            if hasattr(port.io.signal_q, "qsize"):
-                self.logger.info(f"signal_q size: {port.io.signal_q.qsize()}")
-            if hasattr(port.io.signal_q, "empty"):
-                self.logger.info(f"signal_q empty: {port.io.signal_q.empty()}")
+            # if hasattr(port.io.signal_q, "qsize"):
+            #     # self.logger.info(f"signal_q size: {port.io.signal_q.qsize()}")
+            # if hasattr(port.io.signal_q, "empty"):
+            #     # self.logger.info(f"signal_q empty: {port.io.signal_q.empty()}")
 
-            self.logger.info("=== END QUEUE INSPECTION ===")
+            # self.logger.info("=== END QUEUE INSPECTION ===")
 
     async def _send_on_port(self, port_id: str, data: bytes):
         """Send data on specific port (debug version)"""
-        self.logger.info(f"Attempting to send data on port {port_id}: {data[:100]}...")
+        # self.logger.info(f"Attempting to send data on port {port_id}: {data[:100]}...")
+        if data.startswith(b"FSP"):
+            self.logger.info(f"Attempting to send data on {port_id}: {data}")
 
         ports = self.thread_manager.get_ports()
-        self.logger.info(f"Available ports: {list(ports.keys())}")
 
         if port_id in ports:
             port = ports[port_id]
-            self.logger.info(f"Port {port_id} found - putting data in write queue")
+            # self.logger.info(f"Port {port_id} found - putting data in write queue")
 
             try:
                 port.io.write_q.put(data)  # This should not be awaited
-                self.logger.info(f"Successfully queued data for port {port_id}")
+                # self.logger.info(f"Successfully queued data for port {port_id}")
                 await asyncio.sleep(0)  # Yield to allow sending
             except Exception as e:
                 self.logger.error(f"Error sending data on port {port_id}: {e}")
@@ -1043,12 +1133,12 @@ class Agent:
 
     def stop(self):
         """Stop the agent thread"""
-        self.logger.info("Stopping Agent")
+        # self.logger.info("Stopping Agent")
         self.running = False
 
     async def _handle_data_message(self, event):
         """Handle data message routing"""
-        self.logger.info(f"Handling data message: {event['data']}")
+        # self.logger.info(f"Handling data message: {event['data']}")
         # TODO: Implement data message routing logic
         pass
     
@@ -1100,7 +1190,7 @@ class Agent:
                     self.logger.error(f"Error in handler for '{msg_type}': {e}")
 
         self.message_inbox.append(packet)
-        self.logger.info(f"Message from {packet.source_id} added to inbox")
+        # self.logger.info(f"Message from {packet.source_id} added to inbox")
 
     def clear_messages(self):
         """Clear all messages from inbox"""
@@ -1121,15 +1211,15 @@ class Agent:
     async def _handle_disconnected(self, event):
         """Handle disconnection (fixed version with proper error handling)"""
         port_id = event["port_id"]
-        self.logger.info(
-            f"🔴 === HANDLING DISCONNECTION for port {port_id} on {self.node_id} ==="
-        )
+        # self.logger.info(
+        #     f"🔴 === HANDLING DISCONNECTION for port {port_id} on {self.node_id} ==="
+        # )
 
         try:
             async with self.state_lock:
                 # Clean up neighbors
                 if port_id in self.neighbors:
-                    self.logger.info(f"Removing neighbor info for port {port_id}")
+                    # self.logger.info(f"Removing neighbor info for port {port_id}")
                     del self.neighbors[port_id]
 
                 # Find trees that need invalidation
@@ -1137,9 +1227,9 @@ class Agent:
                 for tree_id, tree_entry in self.trees.items():
                     if tree_entry.rootward_portid == port_id:
                         trees_to_invalidate.append(tree_id)
-                        self.logger.info(
-                            f"Tree {tree_id} needs invalidation (rootward port {port_id} disconnected)"
-                        )
+                        # # self.logger.info(
+                        #     f"Tree {tree_id} needs invalidation (rootward port {port_id} disconnected)"
+                        # )
 
                 # Prepare invalidation messages and clean up trees
                 invalidation_tasks = []
@@ -1168,15 +1258,15 @@ class Agent:
                                 invalidation_tasks.append(
                                     (check_port_id, invalidation_msg)
                                 )
-                                self.logger.info(
-                                    f"Will send invalidation {invalidation_id} to port {check_port_id} with TTL={self.invalidation_ttl}"
-                                )
+                                # # self.logger.info(
+                                #     f"Will send invalidation {invalidation_id} to port {check_port_id} with TTL={self.invalidation_ttl}"
+                                # )
 
                         # Remove the tree
                         del self.trees[tree_id]
-                        self.logger.info(
-                            f"✅ Invalidated tree {tree_id} due to port {port_id} disconnection"
-                        )
+                        # # self.logger.info(
+                        #     f"✅ Invalidated tree {tree_id} due to port {port_id} disconnection"
+                        # )
 
                     except Exception as e:
                         self.logger.error(
@@ -1185,21 +1275,21 @@ class Agent:
 
                 # Clean up port paths
                 if port_id in self.port_paths:
-                    self.logger.info(f"Removing port path for {port_id}")
+                    # self.logger.info(f"Removing port path for {port_id}")
                     del self.port_paths[port_id]
 
             # Send invalidations outside the lock to avoid deadlock
-            self.logger.info(f"Sending {len(invalidation_tasks)} invalidation messages")
+            # self.logger.info(f"Sending {len(invalidation_tasks)} invalidation messages")
 
             for port, msg in invalidation_tasks:
                 try:
-                    self.logger.info(
-                        f"Sending invalidation to port {port}: {msg[:50]}..."
-                    )
+                    # # self.logger.info(
+                    #     f"Sending invalidation to port {port}: {msg[:50]}..."
+                    # )
                     await self._send_on_port(port, msg)
-                    self.logger.info(
-                        f"✅ Successfully sent invalidation to port {port}"
-                    )
+                    # # self.logger.info(
+                    #     f"✅ Successfully sent invalidation to port {port}"
+                    # )
                 except Exception as e:
                     self.logger.error(
                         f"❌ Failed to send invalidation to port {port}: {e}"
@@ -1207,13 +1297,13 @@ class Agent:
                     # Continue with other invalidations even if one fails
 
             if trees_to_invalidate:
-                self.logger.info(
-                    f" Triggering tree healing for {self.node_id} after disconnection"
-                )
+                # # self.logger.info(
+                #     f" Triggering tree healing for {self.node_id} after disconnection"
+                # )
                 await self._trigger_tree_healing(failed_port=port_id)
-            self.logger.info(
-                f"🔴 === FINISHED HANDLING DISCONNECTION for port {port_id} on {self.node_id} ==="
-            )
+            # # self.logger.info(
+            #     f"🔴 === FINISHED HANDLING DISCONNECTION for port {port_id} on {self.node_id} ==="
+            # )
 
         except Exception as e:
             self.logger.error(
@@ -1228,27 +1318,27 @@ class Agent:
     async def _handle_connected(self, event):
         """Handle port connection event with cross-partition topology sync"""
         port_id = event["port_id"]
-        self.logger.info(
-            f"🔥 === HANDLING CONNECTION EVENT for port {port_id} on {self.node_id} ==="
-        )
+        # # self.logger.info(
+        #     f"🔥 === HANDLING CONNECTION EVENT for port {port_id} on {self.node_id} ==="
+        # )
 
         # Show current state BEFORE processing
-        self.logger.info(f"Current trees BEFORE connection: {list(self.trees.keys())}")
-        self.logger.info(f"Self tree exists: {self.node_id in self.trees}")
+        # self.logger.info(f"Current trees BEFORE connection: {list(self.trees.keys())}")
+        # self.logger.info(f"Self tree exists: {self.node_id in self.trees}")
 
         base_delay = hash(self.node_id) % 5  # 0-4 seconds based on node_id
         jitter = random.uniform(0.5, 1.5)
         total_delay = jitter + base_delay
 
-        self.logger.info(
-            f"⏱️ Waiting {total_delay:.2f} seconds before processing connection..."
-        )
+        # # self.logger.info(
+        #     f"⏱️ Waiting {total_delay:.2f} seconds before processing connection..."
+        # )
         await asyncio.sleep(total_delay)
 
-        self.logger.info(f"✅ Port {port_id} connected - processing now")
+        # self.logger.info(f"✅ Port {port_id} connected - processing now")
 
         async with self.state_lock:
-            self.logger.info(f"Current trees AFTER delay: {list(self.trees.keys())}")
+            # self.logger.info(f"Current trees AFTER delay: {list(self.trees.keys())}")
 
             # Ensure we have our own tree
             if self.node_id not in self.trees:
@@ -1259,18 +1349,18 @@ class Agent:
                     tree_instance_id=tree_instance_id,
                     leafward_portids=[],
                 )
-                self.logger.info(
-                    f"🌳 Created NEW tree rooted at cell {self.node_id} with instance {tree_instance_id}"
-                )
+                # # self.logger.info(
+                #     f"🌳 Created NEW tree rooted at cell {self.node_id} with instance {tree_instance_id}"
+                # )
             else:
                 existing_tree = self.trees[self.node_id]
-                self.logger.info(
-                    f"🌳 Tree for {self.node_id} already exists: {existing_tree}"
-                )
+                # # self.logger.info(
+                #     f"🌳 Tree for {self.node_id} already exists: {existing_tree}"
+                # )
 
             # Get current neighbors for all broadcasts
             current_neighbors = self._get_current_neighbors()
-            self.logger.info(f"👥 Current neighbors for broadcast: {current_neighbors}")
+            # self.logger.info(f"👥 Current neighbors for broadcast: {current_neighbors}")
 
             # Get connected ports
             ports = self.thread_manager.get_ports()
@@ -1281,22 +1371,23 @@ class Agent:
                 if port.protocol_instance:
                     port_state = port.protocol_instance.link_state
 
-                self.logger.info(
-                    f"🔍 Checking port {pid}: protocol_instance={port.protocol_instance is not None}, link_state={port_state}"
-                )
+                # # self.logger.info(
+                #     f"🔍 Checking port {pid}: protocol_instance={port.protocol_instance is not None}, link_state={port_state}"
+                # )
 
                 if (
                     port.protocol_instance
                     and port.protocol_instance.link_state == LinkProtocol.LinkState.CONNECTED
                 ):
                     connected_ports[pid] = port
-                    self.logger.info(f"✅ Port {pid} is connected and ready for broadcast")
+                    # self.logger.info(f"✅ Port {pid} is connected and ready for broadcast")
                 else:
-                    self.logger.info(f"⏭️ Skipping port {pid} - not connected (state: {port_state})")
+                    pass
+                    # self.logger.info(f"⏭️ Skipping port {pid} - not connected (state: {port_state})")
 
             # NEW: Broadcast ALL trees we know about (topology sync)
             trees_to_broadcast = list(self.trees.keys())
-            self.logger.info(f"🌐 Broadcasting {len(trees_to_broadcast)} trees: {trees_to_broadcast}")
+            # self.logger.info(f"🌐 Broadcasting {len(trees_to_broadcast)} trees: {trees_to_broadcast}")
 
             total_broadcasts = 0
             for tree_id in trees_to_broadcast:
@@ -1310,141 +1401,40 @@ class Agent:
                     neighbors=current_neighbors,
                 )
 
-                self.logger.info(
-                    f"📦 Broadcasting tree {tree_id} (hops={tree_entry.hops}, "
-                    f"instance={tree_entry.tree_instance_id[:8]}...)"
-                )
+                # # self.logger.info(
+                #     f"📦 Broadcasting tree {tree_id} (hops={tree_entry.hops}, "
+                #     f"instance={tree_entry.tree_instance_id[:8]}...)"
+                # )
 
                 packet_bytes = tb_packet.to_bytes()
                 tree_broadcast_count = 0
 
                 # Send to all connected ports
                 for pid in connected_ports.keys():
-                    self.logger.info(f"📡 Sending tree {tree_id} to port {pid}")
+                    # self.logger.info(f"📡 Sending tree {tree_id} to port {pid}")
                     await self._send_on_port(pid, packet_bytes)
                     tree_broadcast_count += 1
                     total_broadcasts += 1
 
-                self.logger.info(
-                    f"✅ Broadcasted tree {tree_id} to {tree_broadcast_count} ports"
-                )
+                # # self.logger.info(
+                #     f"✅ Broadcasted tree {tree_id} to {tree_broadcast_count} ports"
+                # )
 
                 # Small stagger between tree broadcasts to avoid overwhelming network
                 if len(trees_to_broadcast) > 1:
                     await asyncio.sleep(0.1)
 
-            self.logger.info(
-                f"🌐 === TOPOLOGY SYNC COMPLETE: {total_broadcasts} total broadcasts ==="
-            )
+            # # self.logger.info(
+            #     f"🌐 === TOPOLOGY SYNC COMPLETE: {total_broadcasts} total broadcasts ==="
+            # )
 
-        self.logger.info(
-            f"🔥 === FINISHED HANDLING CONNECTION for port {port_id} on {self.node_id} ==="
-        )
-
-    # async def _handle_connected(self, event):
-    #     """Handle port connection event (enhanced debug version)"""
-    #     port_id = event["port_id"]
-    #     self.logger.info(
-    #         f"🔥 === HANDLING CONNECTION EVENT for port {port_id} on {self.node_id} ==="
-    #     )
-
-    #     # Show current state BEFORE processing
-    #     self.logger.info(f"Current trees BEFORE connection: {list(self.trees.keys())}")
-    #     self.logger.info(f"Self tree exists: {self.node_id in self.trees}")
-
-    #     base_delay = hash(self.node_id) % 5  # 0-4 seconds based on node_xid
-    #     jitter = random.uniform(0.5, 1.5)
-    #     total_delay = jitter + base_delay
-
-    #     self.logger.info(
-    #         f"⏱️ Waiting {total_delay:.2f} seconds before processing connection..."
-    #     )
-    #     await asyncio.sleep(total_delay)
-
-    #     self.logger.info(f"✅ Port {port_id} connected - processing now")
-
-    #     async with self.state_lock:
-    #         self.logger.info(f"Current trees AFTER delay: {list(self.trees.keys())}")
-
-    #         if self.node_id not in self.trees:
-    #             tree_instance_id = str(uuid.uuid4())
-    #             self.trees[self.node_id] = TreeEntry(
-    #                 rootward_portid="",
-    #                 hops=0,
-    #                 tree_instance_id=tree_instance_id,
-    #                 leafward_portids=[],
-    #             )
-    #             self.logger.info(
-    #                 f"🌳 Created NEW tree rooted at cell {self.node_id} with instance {tree_instance_id}"
-    #             )
-    #             should_broadcast = True
-    #         else:
-    #             existing_tree = self.trees[self.node_id]
-    #             self.logger.info(
-    #                 f"🌳 Tree for {self.node_id} already exists, but broadcasting anyways: {existing_tree}"
-    #             )
-    #             should_broadcast = True
-
-    #         self.logger.info(f"📡 Should broadcast: {should_broadcast}")
-
-    #         if should_broadcast:
-    #             current_neighbors = self._get_current_neighbors()
-    #             self.logger.info(
-    #                 f"👥 Current neighbors for broadcast: {current_neighbors}"
-    #             )
-
-    #             tb_packet = TreeBuild(
-    #                 tree_id=self.node_id,
-    #                 tree_instance_id=self.trees[self.node_id].tree_instance_id,
-    #                 hops=0,
-    #                 neighbors=current_neighbors,
-    #             )
-
-    #             self.logger.info(f"📦 Created TREE_BUILD packet: {tb_packet}")
-    #             packet_bytes = tb_packet.to_bytes()
-    #             self.logger.info(f"📦 Packet bytes: {packet_bytes}")
-
-    #             ports = self.thread_manager.get_ports()
-    #             broadcast_count = 0
-
-    #             for pid, port in ports.items():
-    #                 port_state = "UNKNOWN"
-    #                 if port.protocol_instance:
-    #                     port_state = port.protocol_instance.link_state
-
-    #                 self.logger.info(
-    #                     f"🔍 Checking port {pid}: protocol_instance={port.protocol_instance is not None}, link_state={port_state}"
-    #                 )
-
-    #                 if (
-    #                     port.protocol_instance
-    #                     and port.protocol_instance.link_state
-    #                     == LinkProtocol.LinkState.CONNECTED
-    #                 ):
-
-    #                     self.logger.info(
-    #                         f"📡 Broadcasting TREE_BUILD to connected port {pid}"
-    #                     )
-    #                     await self._send_on_port(pid, packet_bytes)
-    #                     broadcast_count += 1
-    #                 else:
-    #                     self.logger.info(
-    #                         f"⏭️ Skipping port {pid} - not connected (state: {port_state})"
-    #                     )
-
-    #             self.logger.info(
-    #                 f"📡 Broadcasted TREE_BUILD to {broadcast_count} ports"
-    #             )
-    #         else:
-    #             self.logger.info("🚫 No broadcast needed - tree already exists")
-
-    #     self.logger.info(
-    #         f"🔥 === FINISHED HANDLING CONNECTION for port {port_id} on {self.node_id} ==="
-    #     )
+        # # self.logger.info(
+        #     f"🔥 === FINISHED HANDLING CONNECTION for port {port_id} on {self.node_id} ==="
+        # )
 
     async def _trigger_tree_healing(self, failed_port=None):
 
-        self.logger.info("🔄 === Triggering tree healing process ===")
+        # self.logger.info("🔄 === Triggering tree healing process ===")
 
         try:
 
@@ -1452,9 +1442,9 @@ class Agent:
                 our_tree = self.trees[self.node_id]
 
                 if our_tree.rootward_portid == "":
-                    self.logger.info(
-                        f"🔄 Broadcasting our tree {self.node_id} to stimulate healing"
-                    )
+                    # # self.logger.info(
+                    #     f"🔄 Broadcasting our tree {self.node_id} to stimulate healing"
+                    # )
 
                     current_neighbors = self._get_current_neighbors()
 
@@ -1476,22 +1466,23 @@ class Agent:
                             == LinkProtocol.LinkState.CONNECTED
                         ):
 
-                            self.logger.info(
-                                f"🔄 Sending healing TREE_BUILD to port {port_id}"
-                            )
+                            # # self.logger.info(
+                            #     f"🔄 Sending healing TREE_BUILD to port {port_id}"
+                            # )
                             await self._send_on_port(port_id, tb_packet.to_bytes()),
                             healing_broadcast += 1
 
-                    self.logger.info(
-                        f"🔄 Broadcasted healing TREE_BUILD to {healing_broadcast} ports"
-                    )
+                    # # self.logger.info(
+                    #     f"🔄 Broadcasted healing TREE_BUILD to {healing_broadcast} ports"
+                    # )
 
                     await asyncio.sleep(0.2)
 
                 else:
-                    self.logger.info(
-                        f"🔄 We're not root of our tree - cannot initiate healing broadcast"
-                    )
+                    # # self.logger.info(
+                    #     f"🔄 We're not root of our tree - cannot initiate healing broadcast"
+                    # )
+                    pass
             else:
                 async with self.state_lock:
                     if self.node_id not in self.trees:
@@ -1503,16 +1494,16 @@ class Agent:
                             leafward_portids=[],
                         )
                         self._last_tree_change = time.time()
-                        self.logger.info(
-                            f"🔄 Created healing tree {self.node_id} with instance {tree_instance_id}"
-                        )
+                        # # self.logger.info(
+                        #     f"🔄 Created healing tree {self.node_id} with instance {tree_instance_id}"
+                        # )
 
                         # Now broadcast it
                         await self._trigger_tree_healing(failed_port)
         except Exception as e:
             self.logger.error(f"❌ Error during tree healing: {e}", exc_info=True)
 
-        self.logger.info(f"🔄 === FINISHED TREE HEALING ===")
+        # self.logger.info(f"🔄 === FINISHED TREE HEALING ===")
 
     def get_snapshot(self):
         """Get minimal snapshot for DAG construction and routing table generation."""

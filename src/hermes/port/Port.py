@@ -32,7 +32,6 @@ class BasePort(threading.Thread):
         self.faultInjector = faultInjector
         # Create a handler for the logger that works with asyncio
         self.logger = logging.getLogger("Port." + config.port_id)
-        self.logger.disabled = True
 
         self.config = config
         self.io = io
