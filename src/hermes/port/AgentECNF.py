@@ -11,6 +11,7 @@ from hermes.model.trees import PathTree
 from hermes.port.protocol import LinkProtocol
 from hermes.sim.ThreadManager import ThreadManager
 import json
+from hermes.sim.FSPStateColors import *
 
 @dataclass
 class DataPacket:
@@ -75,6 +76,9 @@ class Agent:
         self.link_events = asyncio.Queue()  # for establishing connections and TIKTYKTIK
         self.tree_events = asyncio.Queue()  # for tree build events
         self.message_events = asyncio.Queue()  # for DATA messages
+        
+        #TODO: remove fsp functionality later...
+        self.fsp_events = asyncio.Queue()
 
         self.state_lock = asyncio.Lock()  # Lock for managing shared state
         self.message_inbox = deque(maxlen=1000)  # Limit size to prevent memory issues
@@ -83,6 +87,8 @@ class Agent:
 
         self._last_tree_change = time.time()
         self.message_handlers = {}
+        self.fsp_context = {}
+        
 
     def register_handler(self, message_type, handler_func):
         """Registers a handler for a specific message type"""
@@ -124,10 +130,15 @@ class Agent:
             asyncio.create_task(
                 self._handle_tree_events()
             ),  # handles TREE_BUILD and TREE_BUILD_ACK messages
-            asyncio.create_task(self._handle_message_events()),  # handles DATA messages
+            asyncio.create_task(
+                self._handle_message_events()
+            ),  # handles DATA messages
             asyncio.create_task(
                 self._monitor_ports()
             ),  # provides information on events
+            asyncio.create_task(
+                self._handle_fsp_events()
+            ) # TODO: remove this upon fms-- this utilizes the previous solution to monitor fsp events.
         ]
         try:
             await asyncio.gather(*tasks)
@@ -137,6 +148,294 @@ class Agent:
 
         finally:
             self.running = False
+    
+    # START OF FIRING SQUAD METHODS +====  
+    async def _handle_fsp_events(self):
+        """Handles FSP-related events """
+        while self.running:
+            event = await self.fsp_events.get()
+            
+            if event["data"].startswith(b"FSP_ACTIVATE"):
+                await self._handle_fsp_activate(event)
+            elif event["data"].startswith(b"FSP_ACTIVATE_ACK"):
+                await self._handle_fsp_activate_ack(event)
+            elif event["data"].startswith(b"FSP_STATE"):
+                await self._handle_fsp_state_request(event)
+            elif event["data"].startswith(b"FSP_STATE_ACK"):
+                await self._handle_fsp_state_ack(event)
+    
+    async def _handle_fsp_activate(self, event):
+        """Parses the FSP_ACTIVATE and forwards + tracks position"""
+        parts = event["data"].decode().split()
+        position = int(parts[1]) if len(parts) > 1 else 1
+        from_port = event["port_id"]
+        self.logger.info(f"FSP_ACTIVATE received: position: {position}")
+        
+        self.fsp_context = {
+            'position': position,
+            'right_port': None
+        }
+        if position == 1:
+            self.fsp_context['left_port'] = None
+        else:
+            self.fsp_context['left_port'] = from_port
+            
+        
+        next_port = self._get_other_connected_port(from_port)
+        if next_port:
+            self.fsp_context['right_port'] = next_port
+            
+            forward_message = f"FSP_ACTIVATE {position + 1}"
+            await self._send_on_port(next_port, forward_message.encode())
+            self.logger.info(f"Forwarded FSP_ACTIVATE to position {position + 1}")
+        else:
+            # this is the last on the chain
+            ack_message = f"FSP_ACTIVATE_ACK {position}"
+            self.fsp_context.update({
+                'timestep': 0,
+                'active': True,
+                'max_time': (2 * position) - 2,
+                'state': Q,
+            })
+            self.fsp_context['neighbors_ready'] = {
+                    'left': False,
+                    'right': True
+            }
+            
+            await self._send_on_port(from_port, ack_message.encode())
+            self.logger.info(f"Last cell  sending FSP_ACTIVATE_ACK with chain length {position}")
+
+    async def _handle_fsp_activate_ack(self, event):
+        """Handles FSP_ACTIVATE_ACK, which will ripple back. this WILL assign a default state to the cell (agent is an attribute of cell). assumes linear topology is in place"""
+        parts = event["data"].decode().split()
+        chain_length = int(parts[1]) if len(parts) > 1 else 1 
+        from_port = event["port_id"]
+        
+        self.logger.info(f"FSP_ACTIVATE_ACK received: chain length is {chain_length}")
+
+        if self.fsp_context['position'] == 1:
+            initial_state = P0
+            self.logger.info(f"General at pos {self.fsp_context['position']} set with state P0")
+        else:
+            initial_state = Q
+            self.logger.info(f"Soldier at pos {self.fsp_context['position']} set with state Q")
+        
+        self.fsp_context.update({
+            'timestep': 0,
+            'state': initial_state,
+            'active': True,
+            'max_time': (2 * chain_length) - 2,
+            'chain_length': chain_length
+        })
+    
+        
+        self.fsp_context['neighbors_ready'] = {}
+
+        if self.fsp_context['left_port'] is not None:
+            self.fsp_context['neighbors_ready']['left'] = False  # Waiting for left neighbor's state
+        
+        if self.fsp_context['right_port'] is not None:
+            self.fsp_context['neighbors_ready']['right'] = False
+            
+        if self.fsp_context['position'] > 1:
+        # Forward ACK back to left neighbor
+            await self._send_on_port(self.fsp_context['left_port'], event["data"])
+            self.logger.info(f"Forwarded FSP_ACTIVATE_ACK toward General")
+        else:
+            # We are the general - chain fully activated, start handshake!
+            self.logger.info(f"General: Chain fully activated! Starting FSP handshake...")
+            
+        
+        self.fsp_tables = self._load_fsp_tables(self.fsp_context['chain_length'])
+        self.transition_lock = asyncio.Lock()
+        
+        await self._request_all_neighbor_states()
+ 
+        
+        
+      
+    async def _handle_fsp_state_request(self, event):
+        """Handle neighbor asking for my state - wait for timestep completion"""
+        parts = event["data"].decode().split() 
+        requested_timestep = int(parts[1])
+        from_port = event["port_id"]
+
+        # need to put the shitter asyncio.Events()
+        self.logger.info(f"FSP_STATE request from port {from_port} for timestep {requested_timestep}")           
+
+        # handle <= --> <
+        if self.fsp_context['timestep'] <= requested_timestep:
+            await self._send_fsp_state_ack(from_port, requested_timestep)
+            self.logger.info(f"Sent FSP_STATE_ACK to port {from_port}")   
+        else:
+            # We're ahead - this is an error but respond anyway
+            self.logger.warning(f"Received request for T{requested_timestep} but we're at T{self.fsp_context['timestep']}")
+            await self._send_fsp_state_ack(from_port, self.fsp_context['timestep'])
+    
+    async def _send_fsp_state_ack(self, from_port, timestep):
+        """Send FSP_STATE_ACK with our current state to the requesting port"""
+        current_state = self.fsp_context['state']
+        ack_message = f"FSP_STATE_ACK {timestep} {current_state}"
+        
+        await self._send_on_port(from_port, ack_message.encode())
+        self.logger.info(f"Sent FSP_STATE_ACK: T{timestep}, state={self.fsp_context.get("state", 'UNK')} to port {from_port}") 
+        
+    async def _handle_fsp_state_ack(self, event):
+        """Handles FSP_STATE_ACK responses from neighbors"""
+        parts = event["data"].decode().split()
+        ack_timestep = int(parts[1])
+        neighbor_state = int(parts[2])
+        from_port = event["port_id"]
+        
+        self.logger.info(f"FSP_STATE_ACK from port {from_port}: T{ack_timestep}, state={neighbor_state}")
+
+        if from_port == self.fsp_context['left_port']:
+            neighbor_direction = 'left'
+        elif from_port == self.fsp_context['right_port']:
+            neighbor_direction = 'right'
+        else:
+            self.logger.warning(f"Received FSP_STATE_ACK from unknown port {from_port}")
+            return
+        
+        if ack_timestep != self.fsp_context['timestep']:
+            self.logger.warning(f"️Received ACK for T{ack_timestep} but expecting T{self.fsp_context['timestep']}")
+            return
+        
+        if 'neighbor_states' not in self.fsp_context:
+            self.fsp_context['neighbor_states'] = {}
+        self.fsp_context['neighbor_states'][neighbor_direction] = neighbor_state
+        
+        if all(self.fsp_context['neighbors_ready'].values()):
+            self.logger.info(f"All neighbors ready for T{self.fsp_context['timestep']} - advancing!")
+            await self._advance_timestep()
+        else:
+            missing = [direction for direction, ready in self.fsp_context['neighbors_ready'].items() if not ready]
+            self.logger.info(f"Still waiting for: {missing}")
+        
+        
+    async def _advance_timestep(self):
+        """Advance FSP state by one time step"""
+
+        async with self.transition_lock:
+            left_state = self._get_neighbor_state('left')
+            right_state = self._get_neighbor_state('right')
+
+            old_state = self.fsp_context['state']
+            
+            self.logger.info(f"🔍 {self.node_id} T{self.fsp_context['timestep']} transition input:")  
+            self.logger.info(f"    - Left:  ({statename.get(left_state, 'UNK')})")
+            self.logger.info(f"    - Current:  ({statename.get(old_state, 'UNK')})")
+            self.logger.info(f"    - Right: ({statename.get(right_state, 'UNK')})")
+
+            new_state = self._apply_fsp_transition(left_state, old_state, right_state) 
+
+            self.logger.info(f"    - Result: ({new_state})")
+
+            
+        if new_state != old_state:
+            self.fsp_context['state'] = new_state  
+            self.logger.info(f"🔄 FSP {self.node_id} T{self.fsp_context['timestep']}: {statename.get(old_state, 'UNK')} → {statename.get(new_state, 'UNK')}")
+        
+        self.fsp_context['timestep'] += 1 
+        
+        for direction in self.fsp_context['neighbors_ready']:
+            self.fsp_context['neighbors_ready'][direction] = False
+            
+        if self.fsp_context['timestep'] < self.fsp_context['max_time']:
+            await self._request_all_neighbor_states()
+        else:
+            await self._check_fsp_completion()
+    
+    async def _check_fsp_completion(self):
+        """Check FSP completion and report results"""
+        if self.fsp_context['timestep'] >= self.fsp_context['max_time']:
+            if self.fsp_state == T:
+                self.logger.info(f"🔥🔥🔥 CELL {self.cell_id} FIRED SUCCESSFULLY! 🔥🔥🔥")
+                # needs a fix here for cleanup for general
+                self.am_general = False
+                
+            else:
+                self.logger.info(f"⚠️ FSP completed but {self.cell_id} did not fire. Final state: {statename.get(self.fsp_state, 'UNK')}")
+        else:
+            self.logger.info(f"⏹️ FSP stopped early at time {self.fsp_time_step}")
+        
+        self.fsp_active = False
+    
+    def _get_neighbor_state(self, direction):
+        """Get neighbor state from handshake data"""
+        if 'neighbor_states' not in self.fsp_context:
+            return xx  # No neighbor data yet
+            
+        return self.fsp_context['neighbor_states'].get(direction, xx)
+        
+        
+    
+    def _apply_fsp_transition(self, left_state, current_state, right_state):
+        """Apply Wakesman FSP transition rules"""
+        if not self.fsp_tables:
+            return current_state
+        
+        prior = (left_state * 32) + right_state
+        
+        # Map states to table indices
+        state_to_table = {
+            Q: 0, R0: 1, R1: 2, P0: 3, P1: 4, B0: 5, B1: 6,
+            A0: 7, A1: 8, A2: 9, A3: 10, A4: 11, A5: 12, A6: 13, A7: 14
+        }
+        
+        if current_state in state_to_table:
+            table_idx = state_to_table[current_state]
+            return self.fsp_tables[table_idx].get(prior, Q)
+        
+        return current_state
+    
+    
+    async def _request_all_neighbor_states(self):
+        """Send FSP_STATE requests to all neighbors and reset readiness flags"""
+        current_timestep = self.fsp_context['timestep']
+        
+        # Reset readiness flags - this creates the "block" until ACKs arrive
+        for direction in self.fsp_context['neighbors_ready']:
+            self.fsp_context['neighbors_ready'][direction] = False
+        
+        request_count = 0
+        
+        # Send request to left neighbor if exists
+        if self.fsp_context['left_port'] is not None:
+            request_msg = f"FSP_STATE {current_timestep}"
+            await self._send_on_port(self.fsp_context['left_port'], request_msg.encode())
+            self.logger.info(f"📤 Sent FSP_STATE request to LEFT neighbor for T{current_timestep}")
+            request_count += 1
+            
+        # Send request to right neighbor if exists  
+        if self.fsp_context['right_port'] is not None:
+            request_msg = f"FSP_STATE {current_timestep}"
+            await self._send_on_port(self.fsp_context['right_port'], request_msg.encode())
+            self.logger.info(f"📤 Sent FSP_STATE request to RIGHT neighbor for T{current_timestep}")
+            request_count += 1
+        
+        if request_count == 0:
+            # No neighbors - can advance immediately (shouldn't happen in chain)
+            self.logger.info(f"⚠️ No neighbors to request from - advancing immediately")
+            await self._advance_fsp_state()
+        else:
+            self.logger.info(f"🚫 BLOCKED: Waiting for {request_count} neighbor ACKs for T{current_timestep}")
+        
+     
+    # END OF FIRING SQUAD METHODS =========   
+
+        
+        
+    def _get_other_connected_port(self, exclude_port):
+        """This method ASSUMES a linear topology. It will return the next port not excluded, else None."""
+        ports = self.thread_manager.get_ports()
+        for port_id, port in ports.items():
+            if (port_id != exclude_port and 
+            port.protocol_instance and 
+            port.protocol_instance.link_state == LinkProtocol.LinkState.CONNECTED):
+                return port_id
+        return None
+                
 
     async def _handle_tree_events(self):
         """Handle tree-related packets like TREE_BUILD and TREE_BUILD_ACK"""
@@ -310,6 +609,42 @@ class Agent:
                     neighbors.append(f"neighbor_via_{port_id}")
 
         return neighbors
+    
+    def _load_fsp_tables(self, chain_length):
+        """Load Wakesman FSP transition tables"""
+        try:
+            import sys
+            import os
+            from hermes.sim.wakesman_fsp import process_csv_for_run
+            
+            # ADD DEBUGGING TO CHECK CONSTANTS:
+            self.logger.info(f"🔍 Checking state constants:")
+            self.logger.info(f"    Q={Q}, T={T}, P0={P0}, P1={P1}")
+            self.logger.info(f"    B0={B0}, B1={B1}, R0={R0}, R1={R1}")
+            self.logger.info(f"    A0={A0}, A1={A1}, A2={A2}, A3={A3}")
+            self.logger.info(f"    A4={A4}, A5={A5}, A6={A6}, A7={A7}")
+            self.logger.info(f"    xx={xx}")
+            
+            tables = process_csv_for_run(chain_length)
+            
+            # CHECK P0 TABLE ENTRIES:
+            if tables and len(tables) > 3:
+                p0_table = tables[3]  # P0 table is at index 3
+                self.logger.info(f"🔍 P0 table has {len(p0_table)} entries")
+                
+                # Check for the specific transitions Alice should make:
+                p0_left_p0_right = (P0 * 32) + P0  # Should give T
+                p0_left_q_right = (P0 * 32) + Q    # Current Alice case
+                p0_left_a2_right = (P0 * 32) + A2  # Current Alice case
+                
+                self.logger.info(f"    Key for (P0,P0,P0): {p0_left_p0_right} -> {p0_table.get(p0_left_p0_right, 'MISSING')}")
+                self.logger.info(f"    Key for (P0,P0,Q): {p0_left_q_right} -> {p0_table.get(p0_left_q_right, 'MISSING')}")
+                self.logger.info(f"    Key for (P0,P0,A2): {p0_left_a2_right} -> {p0_table.get(p0_left_a2_right, 'MISSING')}")
+            
+            return tables
+        except ImportError as e:
+            self.logger.info(f"⚠️ Could not load FSP tables: {e}")
+            return None
     
 
     async def _should_join_tree(self, tb_packet: TreeBuild, port_id: str) -> bool:
@@ -633,6 +968,10 @@ class Agent:
                             f"Routing DATA_MESSAGE to message_events from port {portid}"
                         )
                         await self.message_events.put(event)
+                        
+                    # REMOVE UPON COMPLETION OF FMS: this introduces a lower level abstration JUST for the firing state problem.
+                    elif data.startswith(b"FSP_"):
+                        await self.fsp_events.put(event)
                     else:
                         self.logger.info(
                             f"Routing unknown message to link_events from port {portid}: {data[:20]}"

@@ -1,12 +1,11 @@
-#!/usr/bin/env python3
 
-"""
-A lightweight daemon to facilitate the creation of cells. DEPRECATED
-"""
 import subprocess
 from xmlrpc.server import SimpleXMLRPCServer
 import socket
 
+"""
+A lightweight daemon to facilitate the creation of cells. DEPRECATED
+"""
 def get_local_ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

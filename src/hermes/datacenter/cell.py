@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
 
-"""
-cell.py - individual unit of compute that can be controlled via XML - RPC
-"""
-
 from xmlrpc.server import SimpleXMLRPCServer
 import threading
 import argparse
@@ -14,6 +10,11 @@ from hermes.port.AgentECNF import Agent
 import logging
 from hermes.faults.FaultInjector import FaultState
 from hermes.sim.FSPTopologyMixin import FSPTopologyMixin
+
+
+"""
+cell.py - individual unit of compute that can be controlled via XML - RPC
+"""
 
 class Cell(FSPTopologyMixin):
     def __init__(self, cell_id, rpc_port, bind_addr="localhost"):
@@ -118,6 +119,7 @@ class Cell(FSPTopologyMixin):
             self.rpc_server.register_function(self.get_messages, "get_messages")
             self.rpc_server.register_function(self.pop_message, "pop_message")
 
+            # Firing Squad Problem RPC commands (Remove if not using Mixin)
             self.rpc_server.register_function(self.get_fsp_status, "get_fsp_status")
             self.rpc_server.register_function(self.trigger_manual_fsp_as_general, "trigger_manual_fsp_as_general")
 
@@ -227,11 +229,11 @@ class Cell(FSPTopologyMixin):
                             
             
     
-    def heartbeat(self):
+    def heartbeat(self) -> str:
         """Health check"""
         return f"alive:{self.cell_id}"
 
-    def get_messages(self, from_node=None):
+    def get_messages(self, from_node: str =None) -> str:
         """Get received messages"""
         try:
             # Convert empty string back to None
@@ -256,31 +258,31 @@ class Cell(FSPTopologyMixin):
         except Exception as e:
             return {"error": f"Error getting messages: {str(e)}"}
     
-    def clear_messages(self):
+    def clear_messages(self) -> str:
         """Clear all messages from inbox"""
         try:
             count = self.agent.clear_messages()
-            return {"success": True, "message": f"Cleared {count} messages"}
+            return f"Cleared {count} messages"
         except Exception as e:
-            return {"error": f"Error clearing messages: {str(e)}"}
+            return f"Error in clearing messages: {e}"
 
     def pop_message(self):
         """Get and remove oldest message"""
         try:
             msg = self.agent.pop_message()
             if msg is None:
-                return {"message": "No messages available"}
+                return "message not available"
             
-            return {
+            return str({
                 'source': str(msg.source_id) if msg.source_id else "",
                 'payload': str(msg.payload) if msg.payload is not None else "",
                 'timestamp': float(msg.timestamp) if msg.timestamp else 0.0,
                 'message_id': str(msg.message_id) if msg.message_id else ""
-            }
+            })
         except Exception as e:
-            return {"error": f"Error popping message: {str(e)}"}
+            return f"Error popping out message: {e} "
 
-    def send_message(self, destination_id, payload):
+    def send_message(self, destination_id: str, payload: str) -> str:
         """Send message to another cell"""
         try:
             if not hasattr(self, 'agent_loop') or self.agent_loop.is_closed():
@@ -291,11 +293,11 @@ class Cell(FSPTopologyMixin):
                 self.agent_loop
             )
             result = future.result(timeout=5.0)
-            return {"success": bool(result), "message": f"Message sent: {result}"}
+            return f"Message sent with result: {result}"
         except Exception as e:
-            return {"error": f"Error sending message: {str(e)}"}
+            return f"Error sending message: {e}"
     
-    def shutdown(self):
+    def shutdown(self) -> str:
         """Cell shutdown"""
         self.logger.info(f"Shutting down cell {self.cell_id}")
         self.running = False
@@ -454,7 +456,7 @@ class Cell(FSPTopologyMixin):
         except Exception as e:
             return {'error': str(e), 'cell_id': self.cell_id}
                 
-    def inject_fault(self, port_name, fault_type, params):
+    def inject_fault(self, port_name: str, fault_type: str, params: dict) -> str:
         """Fault injection for a specific port"""
         
         try:
