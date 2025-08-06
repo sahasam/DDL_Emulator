@@ -227,6 +227,7 @@ class Agent:
             'max_time': (2 * chain_length) - 2,
             'chain_length': chain_length
         })
+        self.fsp_neighbors_ready_event = asyncio.Event()
     
         
         self.fsp_context['neighbors_ready'] = {}
@@ -260,17 +261,24 @@ class Agent:
         requested_timestep = int(parts[1])
         from_port = event["port_id"]
 
-        # need to put the shitter asyncio.Events()
         self.logger.info(f"FSP_STATE request from port {from_port} for timestep {requested_timestep}")           
 
         # handle <= --> <
-        if self.fsp_context['timestep'] <= requested_timestep:
+        if self.fsp_context['timestep'] > requested_timestep:
             await self._send_fsp_state_ack(from_port, requested_timestep)
-            self.logger.info(f"Sent FSP_STATE_ACK to port {from_port}")   
-        else:
+            self.logger.info(f"Sent current FSP_STATE_ACK to port {from_port}")   
+        elif self.fsp_context['timestep'] == requested_timestep:
+            self.logger.info(f"Waiting for all neighbors before responding to T{requested_timestep}")
+
+            await self.fsp_neighbors_ready_event.wait()
+            
+            await self._send_fsp_state_ack(from_port, requested_timestep)
+            self.logger.info(f"Sent completed state for T{requested_timestep}")
+            
+        else: 
             # We're ahead - this is an error but respond anyway
             self.logger.warning(f"Received request for T{requested_timestep} but we're at T{self.fsp_context['timestep']}")
-            await self._send_fsp_state_ack(from_port, self.fsp_context['timestep'])
+           
     
     async def _send_fsp_state_ack(self, from_port, timestep):
         """Send FSP_STATE_ACK with our current state to the requesting port"""
@@ -304,6 +312,7 @@ class Agent:
         if 'neighbor_states' not in self.fsp_context:
             self.fsp_context['neighbor_states'] = {}
         self.fsp_context['neighbor_states'][neighbor_direction] = neighbor_state
+        self.fsp_context['neighbors_ready'][neighbor_direction] = True
         
         if all(self.fsp_context['neighbors_ready'].values()):
             self.logger.info(f"All neighbors ready for T{self.fsp_context['timestep']} - advancing!")
@@ -336,10 +345,14 @@ class Agent:
             self.fsp_context['state'] = new_state  
             self.logger.info(f"🔄 FSP {self.node_id} T{self.fsp_context['timestep']}: {statename.get(old_state, 'UNK')} → {statename.get(new_state, 'UNK')}")
         
+        self.fsp_neighbors_ready_event.set()
+        
         self.fsp_context['timestep'] += 1 
         
         for direction in self.fsp_context['neighbors_ready']:
             self.fsp_context['neighbors_ready'][direction] = False
+        
+
             
         if self.fsp_context['timestep'] < self.fsp_context['max_time']:
             await self._request_all_neighbor_states()
@@ -349,7 +362,7 @@ class Agent:
     async def _check_fsp_completion(self):
         """Check FSP completion and report results"""
         if self.fsp_context['timestep'] >= self.fsp_context['max_time']:
-            if self.fsp_state == T:
+            if self.fsp_context['state'] == T:
                 self.logger.info(f"🔥🔥🔥 CELL {self.cell_id} FIRED SUCCESSFULLY! 🔥🔥🔥")
                 # needs a fix here for cleanup for general
                 self.am_general = False
@@ -392,7 +405,9 @@ class Agent:
     
     async def _request_all_neighbor_states(self):
         """Send FSP_STATE requests to all neighbors and reset readiness flags"""
+        self.fsp_neighbors_ready_event.clear()
         current_timestep = self.fsp_context['timestep']
+
         
         # Reset readiness flags - this creates the "block" until ACKs arrive
         for direction in self.fsp_context['neighbors_ready']:
