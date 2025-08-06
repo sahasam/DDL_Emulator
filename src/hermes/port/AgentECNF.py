@@ -263,7 +263,6 @@ class Agent:
 
         self.logger.info(f"FSP_STATE request from port {from_port} for timestep {requested_timestep}")           
 
-        # handle <= --> <
         if self.fsp_context['timestep'] > requested_timestep:
             await self._send_fsp_state_ack(from_port, requested_timestep)
             self.logger.info(f"Sent current FSP_STATE_ACK to port {from_port}")   
@@ -341,10 +340,10 @@ class Agent:
             self.logger.info(f"    - Result: ({new_state})")
 
             
-        if new_state != old_state:
-            self.fsp_context['state'] = new_state  
-            self.logger.info(f"🔄 FSP {self.node_id} T{self.fsp_context['timestep']}: {statename.get(old_state, 'UNK')} → {statename.get(new_state, 'UNK')}")
-        
+            if new_state != old_state:
+                self.fsp_context['state'] = new_state  
+                self.logger.info(f"🔄 FSP {self.node_id} T{self.fsp_context['timestep']}: {statename.get(old_state, 'UNK')} → {statename.get(new_state, 'UNK')}")
+            
         self.fsp_neighbors_ready_event.set()
         
         self.fsp_context['timestep'] += 1 
@@ -363,14 +362,12 @@ class Agent:
         """Check FSP completion and report results"""
         if self.fsp_context['timestep'] >= self.fsp_context['max_time']:
             if self.fsp_context['state'] == T:
-                self.logger.info(f"🔥🔥🔥 CELL {self.cell_id} FIRED SUCCESSFULLY! 🔥🔥🔥")
-                # needs a fix here for cleanup for general
-                self.am_general = False
-                
+                self.logger.info(f"🔥🔥🔥 CELL FIRED SUCCESSFULLY! 🔥🔥🔥")
+               
             else:
-                self.logger.info(f"⚠️ FSP completed but {self.cell_id} did not fire. Final state: {statename.get(self.fsp_state, 'UNK')}")
+                self.logger.info(f"⚠️ FSP completed but did not fire. Final state: {statename.get(self.fsp_context['state'], 'UNK')}")
         else:
-            self.logger.info(f"⏹️ FSP stopped early at time {self.fsp_time_step}")
+            self.logger.info(f"⏹️ FSP stopped early at time {self.fsp_context['timestep']}")
         
         self.fsp_active = False
     
