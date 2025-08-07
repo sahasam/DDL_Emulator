@@ -87,6 +87,7 @@ class Agent:
         self._last_tree_change = time.time()
         self.message_handlers = {}
         self.fsp_context = {}
+        self.logger.disabled = True
         
 
     def register_handler(self, message_type, handler_func):
