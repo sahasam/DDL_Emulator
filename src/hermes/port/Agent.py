@@ -57,6 +57,7 @@ class Agent(threading.Thread):
         self.trees = {}
         self.port_paths = {}
         self.stop_event = threading.Event()
+        self.logger.disabled = True
 
     def _broadcast_tree_build(self, exclude_portid: str, tb_packet: TreeBuild):
         for portid, port in self.thread_manager.get_ports().items():
