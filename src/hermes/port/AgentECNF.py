@@ -87,7 +87,7 @@ class Agent:
         self._last_tree_change = time.time()
         self.message_handlers = {}
         self.fsp_context = {}
-        self.logger.disabled = True
+        self.logger.disabled = False
         
 
     def register_handler(self, message_type, handler_func):
@@ -272,6 +272,11 @@ class Agent:
                 'left': False,
                 'right': True,
             }
+
+            self.fsp_context['neighbor_states'] = {
+                'left': xx,
+                'right': xx
+            }
             self.fsp_context['chain_length'] = position
             self.fsp_tables = self._load_fsp_tables(position)
             self.transition_lock = asyncio.Lock()
@@ -428,7 +433,7 @@ class Agent:
         
         if (all(self.fsp_context['neighbors_ready'].values()) and 
             all(self.fsp_context['sent_to_neighbors'].values())):
-            # self.logger.info(f"All neighbors ready for T{self.fsp_context['timestep']} - advancing!")
+            self.logger.info(f"All neighbors ready for T{self.fsp_context['timestep']} - advancing!")
             await self._advance_timestep()
         else:
             missing = [direction for direction, ready in self.fsp_context['neighbors_ready'].items() if not ready]
@@ -488,14 +493,14 @@ class Agent:
         if self.fsp_context['timestep'] >= self.fsp_context['max_time']:
             if self.fsp_context['state'] == T:
                 self.logger.info(f"🔥🔥🔥 CELL FIRED SUCCESSFULLY! 🔥🔥🔥")
-               
+                self.fsp_context['active'] = False
+                del self.fsp_context['running_uuid']
             else:
                 self.logger.info(f"⚠️ FSP completed but did not fire. Final state: {statename.get(self.fsp_context['state'], 'UNK')}")
         else:
             self.logger.info(f"⏹️ FSP stopped early at time {self.fsp_context['timestep']}")
         
-        self.fsp_context['active'] = False
-        del self.fsp_context['running_uuid']
+        
     
     def _get_neighbor_state(self, direction):
         """Get neighbor state from handshake data"""
