@@ -140,7 +140,9 @@ class Cell(): # removed the Mixin
         self.logger.info("Received command to start as general.")
         
         try:
-            # Check if agent loop is available
+            if self.agent.fsp_context.get("active", False):
+                return "failed to start fsp due to process already running."
+
             if not hasattr(self, 'agent_loop') or self.agent_loop.is_closed():
                 return {"success": False, "message": "Agent event loop not available"}
             

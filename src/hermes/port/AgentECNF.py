@@ -110,21 +110,24 @@ class Agent:
         try:
             # Create the FSP_ACTIVATE event to trigger FSP on THIS cell (the general)
             # The general starts at position 1 and has no left neighbor
+            temp_uuid = uuid.uuid4()
+            # this will be set when general processes the first 's' evente
+            # self.fsp_context['running_uuid'] = temp_uuid
             fsp_event = {
-                "data": b"FSP_ACTIVATE 1",
+                "data": f"FSP_ACTIVATE 1 {temp_uuid}".encode(),
                 "port_id": "general_start",  # Special marker indicating this is the start
                 "type": "FSP_ACTIVATE"
             }
             
             # Put the activation event into our own FSP events queue
-            await self.fsp_events.put(fsp_event)
+            await self._handle_fsp_activate(fsp_event)
             
             # self.logger.info(f"📤 FSP_ACTIVATE sent to local fsp_events queue")
             
             return {"success": True, "message": "FSP activation initiated"}
             
         except Exception as e:
-            self.logger.error(f"❌ Failed to start FSP: {e}")
+            self.logger.error(f"❌ Failed to start FSP:", e)
             return {"success": False, "message": f"Failed to start FSP: {str(e)}"}
 
     
@@ -136,10 +139,13 @@ class Agent:
         return {
             "status": "active" if self.fsp_context.get('active', False) else "inactive",
             "position": self.fsp_context.get('position'),
-            "timestep": self.fsp_context.get('timestep'),
-            "state": self.fsp_context.get('state'),
+            "time_step": self.fsp_context.get('timestep'),
+            "current_state": statename.get(self.fsp_context.get('state'), 'UNK'),
             "chain_length": self.fsp_context.get('chain_length'),
             "max_time": self.fsp_context.get('max_time'),
+            "is_general": self.fsp_context.get('position') == 1,
+            'role': "general" if self.fsp_context.get('position') == 1 else "soldier",
+            "topology_established": True,
         }
 
     async def run(self):
@@ -199,15 +205,18 @@ class Agent:
             elif event["data"].startswith(b"FSP_ACTIVATE"):
                 await self._handle_fsp_activate(event)
             elif event["data"].startswith(b"FSP_STATE_ACK"):
-               await self._handle_fsp_state_ack(event)
+                if self.fsp_context:
+                    await self._handle_fsp_state_ack(event)
             elif event["data"].startswith(b"FSP_STATE_NACK"):
-               await self._handle_fsp_state_nack(event)
+                if self.fsp_context:
+                    await self._handle_fsp_state_nack(event)
             elif event["data"].startswith(b"FSP_STATE"):
-               await self._handle_fsp_state_request(event)
+                if self.fsp_context:
+                    await self._handle_fsp_state_request(event)
     
     async def _handle_fsp_state_nack(self, event):
         from_port = event["port_id"]
-        payload = f"FSP_STATE {self.fsp_context['timestep']}"
+        payload = f"FSP_STATE {self.fsp_context['timestep']} {self.fsp_context['running_uuid']}"
         
         await self._send_on_port(from_port, payload.encode())
            
@@ -217,11 +226,21 @@ class Agent:
         position = int(parts[1]) if len(parts) > 1 else 1
         from_port = event["port_id"]
         # self.logger.info(f"FSP_ACTIVATE received: position: {position}")
+        uuid = (parts[2])
+        if self.fsp_context.get('running_uuid', None) :
+            self.logger.info("running uuids don't match. dismissing this message...")
+            return
+        else:
+            self.logger.info(f"setting running uuid to: {uuid}")
+            self.fsp_context['running_uuid'] = uuid
+            asyncio.create_task(asyncio.sleep(15)).add_done_callback(
+                lambda _: self._kill_fsp(uuid)
+            )
         
-        self.fsp_context = {
+        self.fsp_context.update({
             'position': position,
             'right_port': None
-        }
+        })
         if position == 1:
             self.fsp_context['left_port'] = None
         else:
@@ -232,12 +251,12 @@ class Agent:
         if next_port:
             self.fsp_context['right_port'] = next_port
             
-            forward_message = f"FSP_ACTIVATE {position + 1}"
+            forward_message = f"FSP_ACTIVATE {position + 1} {uuid}"
             await self._send_on_port(next_port, forward_message.encode())
             # self.logger.info(f"Forwarded FSP_ACTIVATE to position {position + 1}")
         else:
             # this is the last on the chain
-            ack_message = f"FSP_ACTIVATE_ACK {position}"
+            ack_message = f"FSP_ACTIVATE_ACK {position} {uuid}"
             self.fsp_context.update({
                 'timestep': 0,
                 'active': True,
@@ -262,12 +281,22 @@ class Agent:
 
             await self._request_all_neighbor_states()
 
-
+    def _kill_fsp(self, run_uuid):
+        if 'state' in self.fsp_context and self.fsp_context['state'] != T and run_uuid == self.fsp_context["running_uuid"]:
+            self.logger.info("we are killing this instance of fsp")
+            self.fsp_context = {}
+        
+            
+            
     async def _handle_fsp_activate_ack(self, event):
         """Handles FSP_ACTIVATE_ACK, which will ripple back. this WILL assign a default state to the cell (agent is an attribute of cell). assumes linear topology is in place"""
         parts = event["data"].decode().split()
         chain_length = int(parts[1]) if len(parts) > 1 else 1 
         from_port = event["port_id"]
+        uuid = (parts[2])
+        if uuid != self.fsp_context['running_uuid']:
+            self.logger.info("running uuids don't match. dismissing this message...")
+            return
         
         # self.logger.info(f"FSP_ACTIVATE_ACK received: chain length is {chain_length}")
 
@@ -298,10 +327,11 @@ class Agent:
                 'left': False,
                 'right': False,
             }
-            
+        
+        payload = f"FSP_ACTIVATE_ACK {chain_length} {self.fsp_context['running_uuid']}"
         if self.fsp_context['position'] > 1:
         # Forward ACK back to left neighbor
-            await self._send_on_port(self.fsp_context['left_port'], event["data"])
+            await self._send_on_port(self.fsp_context['left_port'], payload.encode())
             # self.logger.info(f"Forwarded FSP_ACTIVATE_ACK toward General")
         else:
             # We are the general - chain fully activated, start handshake!
@@ -312,6 +342,10 @@ class Agent:
         self.transition_lock = asyncio.Lock()
         
         await self._request_all_neighbor_states()
+        
+         
+        
+        
  
         
         
@@ -321,11 +355,15 @@ class Agent:
         parts = event["data"].decode().split() 
         requested_timestep = int(parts[1])
         from_port = event["port_id"]
+        uuid = parts[2]
+        if uuid != self.fsp_context['running_uuid']:
+            self.logger.info("running uuids don't match. dismissing this message...")
+            return
 
         # self.logger.info(f"FSP_STATE request from port {from_port} for timestep {requested_timestep}")           
 
         if self.fsp_context['timestep'] < requested_timestep:
-            await self._send_on_port(from_port, f"FSP_STATE_NACK".encode())
+            await self._send_on_port(from_port, f"FSP_STATE_NACK {self.fsp_context['running_uuid']}".encode())
             
             # self.logger.info(f"Sent current FSP_STATE_ACK to port {from_port}")   
         elif self.fsp_context['timestep'] == requested_timestep:
@@ -340,7 +378,7 @@ class Agent:
             await self._send_fsp_state_ack(from_port, requested_timestep)
             # self.logger.info(f"Sent completed state for T{requested_timestep}")
         elif self.fsp_context['timestep'] > requested_timestep:
-            await self._send_on_port(from_port, f"FSP_STATE_NACK".encode())
+            await self._send_on_port(from_port, f"FSP_STATE_NACK {self.fsp_context['running_uuid']}".encode())
         else: 
             # We're ahead - this is an error but respond anyway
             self.logger.warning(f"Received request for T{requested_timestep} but we're at T{self.fsp_context['timestep']}")
@@ -349,7 +387,7 @@ class Agent:
     async def _send_fsp_state_ack(self, from_port, timestep):
         """Send FSP_STATE_ACK with our current state to the requesting port"""
         current_state = self.fsp_context['state']
-        ack_message = f"FSP_STATE_ACK {timestep} {current_state}"
+        ack_message = f"FSP_STATE_ACK {timestep} {current_state} {self.fsp_context['running_uuid']}"
         
         await self._send_on_port(from_port, ack_message.encode())
         # self.logger.info(f"Sent FSP_STATE_ACK: T{timestep}, state={self.fsp_context.get("state", 'UNK')} to port {from_port}") 
@@ -360,6 +398,11 @@ class Agent:
         ack_timestep = int(parts[1])
         neighbor_state = int(parts[2])
         from_port = event["port_id"]
+        uuid = (parts[3])
+        
+        if uuid != self.fsp_context['running_uuid']:
+            self.logger.info("running uuids don't match. dismissing this message...")
+            return
 
         self.logger.info(self.fsp_context)
         # self.logger.info(f"FSP_STATE_ACK from port {from_port}: T{ack_timestep}, state={neighbor_state}")
@@ -416,7 +459,7 @@ class Agent:
             if new_state != old_state:
                 self.fsp_context['state'] = new_state  
                 # self.logger.info(f"🔄 FSP {self.node_id} T{self.fsp_context['timestep']}: {statename.get(old_state, 'UNK')} → {statename.get(new_state, 'UNK')}")
-            
+        await asyncio.sleep(1)   
         
         self.fsp_context['timestep'] += 1 
         
@@ -451,6 +494,7 @@ class Agent:
             self.logger.info(f"⏹️ FSP stopped early at time {self.fsp_context['timestep']}")
         
         self.fsp_context['active'] = False
+        del self.fsp_context['running_uuid']
     
     def _get_neighbor_state(self, direction):
         """Get neighbor state from handshake data"""
@@ -494,14 +538,14 @@ class Agent:
         
         # Send request to left neighbor if exists
         if self.fsp_context['left_port'] is not None:
-            request_msg = f"FSP_STATE {current_timestep}"
+            request_msg = f"FSP_STATE {current_timestep} {self.fsp_context['running_uuid']}"
             await self._send_on_port(self.fsp_context['left_port'], request_msg.encode())
             # self.logger.info(f"📤 Sent FSP_STATE request to LEFT neighbor for T{current_timestep}")
             request_count += 1
             
         # Send request to right neighbor if exists  
         if self.fsp_context['right_port'] is not None:
-            request_msg = f"FSP_STATE {current_timestep}"
+            request_msg = f"FSP_STATE {current_timestep} {self.fsp_context['running_uuid']}"
             await self._send_on_port(self.fsp_context['right_port'], request_msg.encode())
             # self.logger.info(f"📤 Sent FSP_STATE request to RIGHT neighbor for T{current_timestep}")
             request_count += 1
@@ -509,7 +553,7 @@ class Agent:
         if request_count == 0:
             # No neighbors - can advance immediately (shouldn't happen in chain)
             # self.logger.info(f"⚠️ No neighbors to request from - advancing immediately")
-            await self._advance_fsp_state()
+            await self._advance_timestep()
         else:
             pass
             # self.logger.info(f"🚫 BLOCKED: Waiting for {request_count} neighbor ACKs for T{current_timestep}")
